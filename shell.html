@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;
+            frame-src http://127.0.0.1:3080">
+    <title>DSH Desktop</title>
+    <link rel="stylesheet" href="shell.css">
+    <script src="renderer.js" defer></script>
+</head>
+<body>
+    <main id="setup-view" class="setup-view">
+        <header class="setup-header">
+            <div class="brand-mark" aria-hidden="true">DSH</div>
+            <div class="header-rule"></div>
+            <span>DESKTOP CONTROL SURFACE</span>
+        </header>
+
+        <section class="setup-layout">
+            <div class="setup-identity">
+                <span class="section-index">01 / SOURCE</span>
+                <h1>DeepSeek<br>Harness</h1>
+                <div class="signal-line" aria-hidden="true">
+                    <span></span><span></span><span></span><span></span><span></span>
+                </div>
+            </div>
+
+            <div class="setup-panel">
+                <div class="panel-heading">
+                    <span class="eyebrow">工作区</span>
+                    <h2>选择源码目录</h2>
+                </div>
+
+                <label for="source-path">源码路径</label>
+                <div class="path-control">
+                    <input id="source-path" type="text" readonly placeholder="未选择">
+                    <button id="choose-source" class="icon-button" type="button" title="选择源码目录"
+                        aria-label="选择源码目录">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9
+                                a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                            <path d="m9 13 2 2 4-4"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="readiness" aria-live="polite">
+                    <div class="readiness-row">
+                        <span>依赖</span>
+                        <strong id="dependency-state" data-state="idle">等待检测</strong>
+                    </div>
+                    <div class="readiness-row">
+                        <span>构建记录</span>
+                        <strong id="build-state" data-state="idle">等待检测</strong>
+                    </div>
+                </div>
+
+                <div id="startup-status" class="startup-status" aria-live="polite">
+                    <span class="status-pulse" aria-hidden="true"></span>
+                    <span id="startup-message">请选择源码目录</span>
+                </div>
+
+                <div id="startup-progress" class="progress-panel" hidden>
+                    <div class="progress-meta">
+                        <span>启动进度</span>
+                        <strong id="progress-percent">0%</strong>
+                    </div>
+                    <div class="progress-track" aria-hidden="true">
+                        <span id="progress-fill"></span>
+                    </div>
+                    <div class="progress-detail">
+                        <span id="progress-phase">等待任务</span>
+                        <button id="setup-show-logs" class="text-button" type="button">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 5h16v14H4z"/>
+                                <path d="M7 9h10M7 13h7"/>
+                            </svg>
+                            <span>查看日志</span>
+                        </button>
+                    </div>
+                </div>
+
+                <button id="start-service" class="primary-button" type="button" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="m6 3 14 9-14 9Z"/>
+                    </svg>
+                    <span>启动服务</span>
+                </button>
+            </div>
+        </section>
+        <footer class="app-footer">
+            <span class="client-version" data-role="client-version">DSH Desktop · v--</span>
+            <span class="endpoint-chip">
+                <span class="endpoint-dot" aria-hidden="true"></span>
+                <span>WEB SERVICE</span>
+                <code data-role="endpoint">127.0.0.1:3080</code>
+            </span>
+        </footer>
+    </main>
+
+    <main id="workspace-view" class="workspace-view" hidden>
+        <header class="app-toolbar">
+            <div class="toolbar-brand">DSH</div>
+            <div class="toolbar-source">
+                <span>源码</span>
+                <strong id="active-source"></strong>
+            </div>
+            <div class="toolbar-spacer"></div>
+            <div id="service-status" class="service-status" data-phase="ready">
+                <span></span>
+                <strong id="service-message">服务运行中</strong>
+            </div>
+            <button id="check-update" class="toolbar-button" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 6v6h-6"/>
+                    <path d="M4 18v-6h6"/>
+                    <path d="M18.49 9A7 7 0 0 0 5.64 6.64L4 8"/>
+                    <path d="M5.51 15A7 7 0 0 0 18.36 17.36L20 16"/>
+                </svg>
+                <span>检查更新</span>
+            </button>
+            <button id="workspace-show-logs" class="toolbar-button" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 5h16v14H4z"/>
+                    <path d="M7 9h10M7 13h7"/>
+                </svg>
+                <span>日志</span>
+            </button>
+        </header>
+
+        <div class="web-surface">
+            <webview id="web-content" partition="persist:dsh-web"
+                webpreferences="contextIsolation=yes, nodeIntegration=no, sandbox=yes"></webview>
+            <div id="service-overlay" class="service-overlay" hidden>
+                <div class="large-spinner" aria-hidden="true"></div>
+                <strong id="overlay-message">正在准备</strong>
+            </div>
+        </div>
+        <footer class="app-footer workspace-footer">
+            <span class="client-version" data-role="client-version">DSH Desktop · v--</span>
+            <span class="endpoint-chip">
+                <span class="endpoint-dot" aria-hidden="true"></span>
+                <span>WEB SERVICE</span>
+                <code data-role="endpoint">127.0.0.1:3080</code>
+            </span>
+        </footer>
+    </main>
+
+    <div id="update-dialog" class="modal-backdrop" hidden>
+        <section class="update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">
+            <button id="close-update" class="modal-close" type="button" title="关闭" aria-label="关闭">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <span class="section-index">UPDATE AVAILABLE</span>
+            <h2 id="update-title">发现新版本</h2>
+            <p id="update-summary"></p>
+            <div class="commit-route">
+                <code id="current-commit"></code>
+                <span aria-hidden="true">→</span>
+                <code id="latest-commit"></code>
+            </div>
+            <div class="modal-actions">
+                <button id="cancel-update" class="secondary-button" type="button">稍后</button>
+                <button id="apply-update" class="primary-button compact" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3v12m0 0 4-4m-4 4-4-4"/>
+                        <path d="M5 21h14"/>
+                    </svg>
+                    <span>更新并重启</span>
+                </button>
+            </div>
+        </section>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <aside id="log-drawer" class="log-drawer" hidden aria-labelledby="log-title">
+        <header class="log-header">
+            <div>
+                <span class="section-index">LIVE OUTPUT</span>
+                <h2 id="log-title">命令日志</h2>
+            </div>
+            <button id="close-logs" class="modal-close" type="button" title="关闭日志" aria-label="关闭日志">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </header>
+        <div class="log-toolbar">
+            <span id="log-count">0 条记录</span>
+            <button id="clear-logs" class="text-button" type="button">清空</button>
+        </div>
+        <pre id="command-log" class="command-log">等待命令输出...</pre>
+    </aside>
+    <div id="log-scrim" class="log-scrim" hidden></div>
+</body>
+</html>
