@@ -20,10 +20,6 @@ const CLIENT_ARTIFACT_PATTERNS = [
     'packages/*/*/lib/client.js',
     'packages/*/*/lib/client.js.map'
 ];
-const DEFAULT_SOURCE_DIRS = [
-    'E:\\git_workspace\\github\\deepseek-harness',
-    'E:\\git\\_workspace\\github\\deepseek-harness'
-];
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const WEB_START_TIMEOUT_MS = 2 * 60 * 1000;
 const CMD_EXE = process.env.ComSpec || 'cmd.exe';
@@ -120,8 +116,7 @@ function preferredSourceDir() {
     const settings = readSettings();
     const candidates = [
         process.env.DSH_SOURCE_DIR,
-        settings.sourceDir,
-        ...DEFAULT_SOURCE_DIRS
+        settings.sourceDir
     ];
     for (const candidate of candidates) {
         const result = validateSourceDir(candidate);
@@ -489,7 +484,12 @@ function registerIpcHandlers() {
             properties: ['openDirectory']
         });
         if (result.canceled || result.filePaths.length === 0) return { canceled: true };
-        return inspectSource(result.filePaths[0]);
+        const inspection = await inspectSource(result.filePaths[0]);
+        if (inspection.valid) {
+            sourceDir = inspection.sourceDir;
+            saveSourceDir(sourceDir);
+        }
+        return inspection;
     });
     ipcMain.handle('desktop:start', (_event, selectedSourceDir) => withOperation(
         '启动服务',
