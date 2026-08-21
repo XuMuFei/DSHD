@@ -437,7 +437,23 @@ svg {
     width: 6px;
     height: 6px;
     border-radius: 50%;
+    background: var(--amber);
+}
+
+.endpoint-chip[data-phase="ready"] .endpoint-dot {
     background: var(--green-bright);
+}
+
+.endpoint-chip[data-phase="error"] .endpoint-dot {
+    background: var(--danger);
+}
+
+.endpoint-chip[data-phase="preparing"] .endpoint-dot,
+.endpoint-chip[data-phase="updating"] .endpoint-dot,
+.endpoint-chip[data-phase="installing"] .endpoint-dot,
+.endpoint-chip[data-phase="building"] .endpoint-dot,
+.endpoint-chip[data-phase="starting"] .endpoint-dot {
+    animation: pulse 1s ease-in-out infinite;
 }
 
 .app-toolbar {

@@ -36,6 +36,7 @@ const commandLog = document.getElementById('command-log');
 const logCount = document.getElementById('log-count');
 const versionFields = document.querySelectorAll('[data-role="client-version"]');
 const endpointFields = document.querySelectorAll('[data-role="endpoint"]');
+const endpointChips = document.querySelectorAll('.endpoint-chip');
 
 let selectedSourceDir = '';
 let toastTimer;
@@ -117,6 +118,9 @@ function updateStatus(status) {
     startupMessage.textContent = status.message;
     serviceMessage.textContent = status.message;
     serviceStatus.dataset.phase = status.phase;
+    endpointChips.forEach((chip) => {
+        chip.dataset.phase = status.phase;
+    });
     setProgress(status.progress, status.message);
     const busy = ['preparing', 'updating', 'installing', 'building', 'starting'].includes(status.phase);
     if (!serviceReady && (busy || status.phase === 'error')) startupProgress.hidden = false;
