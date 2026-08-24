@@ -1,7 +1,8 @@
 {
-    "name": "dsh-desktop",
-    "version": "1.0.0",
+    "name": "dshd",
+    "version": "1.2.0",
     "description": "Windows desktop client for DeepSeek Harness Web",
+    "author": "DeepSeek",
     "private": true,
     "main": "main.js",
     "scripts": {
@@ -11,11 +12,12 @@
     },
     "devDependencies": {
         "electron": "^37.2.6",
-        "electron-builder": "^26.0.12"
+        "electron-builder": "^26.0.12",
+        "sharp": "^0.35.3"
     },
     "build": {
-        "appId": "ai.deepseek.dsh.desktop",
-        "productName": "DSH Desktop",
+        "appId": "ai.deepseek.dshd",
+        "productName": "DSHD",
         "electronDist": "node_modules/electron/dist",
         "asar": true,
         "files": [
@@ -24,9 +26,12 @@
             "renderer.js",
             "shell.css",
             "shell.html",
-            "package.json"
+            "package.json",
+            "lib/**",
+            "build/icon.png"
         ],
         "win": {
+            "icon": "build/icon.png",
             "target": [
                 {
                     "target": "nsis",

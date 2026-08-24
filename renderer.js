@@ -1,51 +1,70 @@
-const setupView = document.getElementById('setup-view');
-const workspaceView = document.getElementById('workspace-view');
-const sourcePath = document.getElementById('source-path');
-const chooseSource = document.getElementById('choose-source');
-const startService = document.getElementById('start-service');
-const dependencyState = document.getElementById('dependency-state');
-const buildState = document.getElementById('build-state');
-const startupStatus = document.getElementById('startup-status');
-const startupMessage = document.getElementById('startup-message');
-const startupProgress = document.getElementById('startup-progress');
-const progressPercent = document.getElementById('progress-percent');
-const progressFill = document.getElementById('progress-fill');
-const progressPhase = document.getElementById('progress-phase');
-const setupShowLogs = document.getElementById('setup-show-logs');
-const activeSource = document.getElementById('active-source');
-const serviceStatus = document.getElementById('service-status');
-const serviceMessage = document.getElementById('service-message');
-const checkUpdate = document.getElementById('check-update');
-const workspaceShowLogs = document.getElementById('workspace-show-logs');
-const webContent = document.getElementById('web-content');
-const serviceOverlay = document.getElementById('service-overlay');
-const overlayMessage = document.getElementById('overlay-message');
-const updateDialog = document.getElementById('update-dialog');
-const updateSummary = document.getElementById('update-summary');
-const currentCommit = document.getElementById('current-commit');
-const latestCommit = document.getElementById('latest-commit');
-const closeUpdate = document.getElementById('close-update');
-const cancelUpdate = document.getElementById('cancel-update');
-const applyUpdate = document.getElementById('apply-update');
-const toast = document.getElementById('toast');
-const logDrawer = document.getElementById('log-drawer');
-const logScrim = document.getElementById('log-scrim');
-const closeLogs = document.getElementById('close-logs');
-const clearLogs = document.getElementById('clear-logs');
-const commandLog = document.getElementById('command-log');
-const logCount = document.getElementById('log-count');
-const versionFields = document.querySelectorAll('[data-role="client-version"]');
-const endpointFields = document.querySelectorAll('[data-role="endpoint"]');
-const endpointChips = document.querySelectorAll('.endpoint-chip');
+// ── Renderer process — UI logic ───────────────────────────────────────────
+
+// ── DOM helpers ───────────────────────────────────────────────────────────
+
+const $ = (id) => document.getElementById(id);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+// ── DOM refs ──────────────────────────────────────────────────────────────
+
+const setupView = $('setup-view');
+const workspaceView = $('workspace-view');
+const sourcePath = $('source-path');
+const chooseSource = $('choose-source');
+const startService = $('start-service');
+const dependencyState = $('dependency-state');
+const buildState = $('build-state');
+const startupStatus = $('startup-status');
+const startupMessage = $('startup-message');
+const startupProgress = $('startup-progress');
+const progressPercent = $('progress-percent');
+const progressFill = $('progress-fill');
+const progressPhase = $('progress-phase');
+const setupShowLogs = $('setup-show-logs');
+const activeSource = $('active-source');
+const serviceStatus = $('service-status');
+const serviceMessage = $('service-message');
+const checkUpdate = $('check-update');
+const workspaceShowLogs = $('workspace-show-logs');
+const webContent = $('web-content');
+const serviceOverlay = $('service-overlay');
+const overlayMessage = $('overlay-message');
+const updateDialog = $('update-dialog');
+const updateSummary = $('update-summary');
+const currentCommit = $('current-commit');
+const latestCommit = $('latest-commit');
+const closeUpdate = $('close-update');
+const cancelUpdate = $('cancel-update');
+const applyUpdateBtn = $('apply-update');
+const toast = $('toast');
+const logDrawer = $('log-drawer');
+const logScrim = $('log-scrim');
+const closeLogs = $('close-logs');
+const clearLogs = $('clear-logs');
+const commandLog = $('command-log');
+const logCount = $('log-count');
+const versionFields = $$('[data-role="client-version"]');
+const endpointFields = $$('[data-role="endpoint"]');
+const endpointChips = $$('.endpoint-chip');
+
+// ── State ─────────────────────────────────────────────────────────────────
 
 let selectedSourceDir = '';
 let toastTimer;
 let serviceReady = false;
 
+// ── Cleanup registrations (called on unload to remove IPC listeners) ──────
+
+const cleanupFns = [];
+
+// ── Error message extraction ──────────────────────────────────────────────
+
 function errorMessage(error) {
     if (error instanceof Error) return error.message.replace(/^Error invoking remote method '[^']+': /, '');
     return String(error);
 }
+
+// ── UI helpers ────────────────────────────────────────────────────────────
 
 function setCheck(element, state, text) {
     element.dataset.state = state;
@@ -151,6 +170,8 @@ function hideLogs() {
     logScrim.hidden = true;
 }
 
+// ── Data loading ──────────────────────────────────────────────────────────
+
 async function loadInfo() {
     const info = await window.desktopApi.getInfo();
     const endpoint = `${info.host}:${info.port}`;
@@ -170,6 +191,8 @@ async function loadInitialState() {
         showToast(errorMessage(error), 'error');
     }
 }
+
+// ── Event listeners ───────────────────────────────────────────────────────
 
 setupShowLogs.addEventListener('click', showLogs);
 workspaceShowLogs.addEventListener('click', showLogs);
@@ -231,7 +254,7 @@ updateDialog.addEventListener('click', (event) => {
     if (event.target === updateDialog) hideUpdateDialog();
 });
 
-applyUpdate.addEventListener('click', async () => {
+applyUpdateBtn.addEventListener('click', async () => {
     hideUpdateDialog();
     serviceOverlay.hidden = false;
     checkUpdate.disabled = true;
@@ -247,8 +270,21 @@ applyUpdate.addEventListener('click', async () => {
     }
 });
 
-window.desktopApi.onStatus(updateStatus);
-window.desktopApi.onLogs(renderLogs);
+// ── IPC listener registration with cleanup ───────────────────────────────
+
+const unsubStatus = window.desktopApi.onStatus(updateStatus);
+const unsubLogs = window.desktopApi.onLogs(renderLogs);
+cleanupFns.push(unsubStatus, unsubLogs);
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+    for (const fn of cleanupFns) {
+        if (typeof fn === 'function') fn();
+    }
+});
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────
+
 void loadInfo().catch((error) => showToast(errorMessage(error), 'error'));
 void window.desktopApi.getLogs().then(renderLogs).catch((error) => showToast(errorMessage(error), 'error'));
 void loadInitialState();

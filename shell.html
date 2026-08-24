@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;
-            frame-src http://127.0.0.1:3080">
+            frame-src http://127.0.0.1:3080; connect-src 'self' http://127.0.0.1:3080;
+            form-action 'none'; base-uri 'self'">
     <title>DSH Desktop</title>
     <link rel="stylesheet" href="shell.css">
     <script src="renderer.js" defer></script>

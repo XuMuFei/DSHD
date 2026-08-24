@@ -6,8 +6,8 @@ Windows Electron 客户端，用于启动本机 `deepseek-harness` Web 服务并
 ## 使用
 
 ```powershell
-npm install
-npm start
+pnpm install
+pnpm start
 ```
 
 启动后选择 `deepseek-harness` 源码目录。客户端检查：

@@ -1,3 +1,5 @@
+// ── Preload script — context bridge ───────────────────────────────────────
+
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('desktopApi', {
@@ -9,11 +11,15 @@ contextBridge.exposeInMainWorld('desktopApi', {
     start: (sourceDir) => ipcRenderer.invoke('desktop:start', sourceDir),
     checkForUpdate: () => ipcRenderer.invoke('desktop:check-update'),
     applyUpdate: () => ipcRenderer.invoke('desktop:apply-update'),
+
+    /** @returns {function} cleanup function to remove the listener */
     onLogs: (callback) => {
         const listener = (_event, logs) => callback(logs);
         ipcRenderer.on('desktop:logs', listener);
         return () => ipcRenderer.removeListener('desktop:logs', listener);
     },
+
+    /** @returns {function} cleanup function to remove the listener */
     onStatus: (callback) => {
         const listener = (_event, status) => callback(status);
         ipcRenderer.on('desktop:status', listener);

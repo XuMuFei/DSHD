@@ -13,6 +13,15 @@
     --green-bright: #43c982;
     --amber: #d69120;
     --danger: #c63d35;
+    --anim-signal: 1.8s;
+    --anim-pulse: 1s;
+    --anim-spin: 0.75s;
+    --anim-progress: 240ms;
+    --toast-duration: 4200ms;
+    --radius: 6px;
+    --shadow-offset: 12px;
+    --shadow-offset-lg: 10px;
+    --shadow-color: rgba(23, 26, 28, 0.2);
 }
 
 * {
@@ -147,14 +156,14 @@ svg {
 .signal-line span {
     width: 5px;
     background: var(--ink);
-    animation: signal 1.8s ease-in-out infinite alternate;
+    animation: signal var(--anim-signal) ease-in-out infinite alternate;
 }
 
 .signal-line span:nth-child(1) { height: 9px; }
-.signal-line span:nth-child(2) { height: 24px; animation-delay: 120ms; }
-.signal-line span:nth-child(3) { height: 15px; animation-delay: 240ms; background: var(--amber); }
-.signal-line span:nth-child(4) { height: 32px; animation-delay: 360ms; }
-.signal-line span:nth-child(5) { height: 19px; animation-delay: 480ms; }
+.signal-line span:nth-child(2) { height: 24px; animation-delay: calc(var(--anim-signal) * 0.067); }
+.signal-line span:nth-child(3) { height: 15px; animation-delay: calc(var(--anim-signal) * 0.133); background: var(--amber); }
+.signal-line span:nth-child(4) { height: 32px; animation-delay: calc(var(--anim-signal) * 0.2); }
+.signal-line span:nth-child(5) { height: 19px; animation-delay: calc(var(--anim-signal) * 0.267); }
 
 @keyframes signal {
     from { transform: scaleY(0.65); transform-origin: bottom; }
@@ -165,8 +174,8 @@ svg {
     padding: 38px;
     background: var(--paper);
     border: 1px solid #bfc5bd;
-    border-radius: 6px;
-    box-shadow: 12px 12px 0 #d7dbd4;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-offset) var(--shadow-offset) 0 #d7dbd4;
 }
 
 .panel-heading {
@@ -304,7 +313,7 @@ svg {
     width: 0;
     height: 100%;
     background: var(--green);
-    transition: width 240ms ease;
+    transition: width var(--anim-progress) ease;
 }
 
 .progress-detail {
@@ -343,7 +352,7 @@ svg {
 
 .startup-status[data-active="true"] .status-pulse {
     background: var(--amber);
-    animation: pulse 1s ease-in-out infinite;
+    animation: pulse var(--anim-pulse) ease-in-out infinite;
 }
 
 @keyframes pulse {
@@ -453,7 +462,7 @@ svg {
 .endpoint-chip[data-phase="installing"] .endpoint-dot,
 .endpoint-chip[data-phase="building"] .endpoint-dot,
 .endpoint-chip[data-phase="starting"] .endpoint-dot {
-    animation: pulse 1s ease-in-out infinite;
+    animation: pulse var(--anim-pulse) ease-in-out infinite;
 }
 
 .app-toolbar {
@@ -525,7 +534,7 @@ svg {
 .service-status[data-phase="building"] > span,
 .service-status[data-phase="starting"] > span {
     background: var(--amber);
-    animation: pulse 1s ease-in-out infinite;
+    animation: pulse var(--anim-pulse) ease-in-out infinite;
 }
 
 .toolbar-button {
@@ -572,7 +581,7 @@ svg {
     border: 3px solid #c9cec7;
     border-top-color: var(--green);
     border-radius: 50%;
-    animation: spin 0.75s linear infinite;
+    animation: spin var(--anim-spin) linear infinite;
 }
 
 @keyframes spin {
@@ -594,9 +603,9 @@ svg {
     width: min(470px, 100%);
     padding: 34px;
     border: 1px solid #aeb4ad;
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: var(--paper);
-    box-shadow: 10px 10px 0 rgba(23, 26, 28, 0.2);
+    box-shadow: var(--shadow-offset-lg) var(--shadow-offset-lg) 0 var(--shadow-color);
 }
 
 .update-dialog p {
