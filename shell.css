@@ -275,6 +275,19 @@ svg {
     font-size: 12px;
 }
 
+/* Error state: red text + red pulse to make validation failures obvious */
+.startup-status[data-state="error"] {
+    color: var(--danger);
+}
+
+.startup-status[data-state="error"] .status-pulse {
+    background: var(--danger);
+}
+
+.startup-status[data-state="error"] #startup-message {
+    font-weight: 600;
+}
+
 .progress-panel {
     margin: 2px 0 18px;
     padding: 13px 14px;

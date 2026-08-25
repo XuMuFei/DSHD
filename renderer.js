@@ -78,11 +78,20 @@ function renderInspection(inspection) {
         setCheck(dependencyState, 'idle', '等待检测');
         setCheck(buildState, 'idle', '等待检测');
         startupMessage.textContent = inspection?.error || '请选择源码目录';
+        // Only mark as error when there's an actual validation failure
+        startupStatus.dataset.state = inspection?.error ? 'error' : 'idle';
         startService.disabled = true;
+        if (inspection?.error) {
+            showToast(inspection.error, 'error');
+        }
         return;
     }
     selectedSourceDir = inspection.sourceDir;
     sourcePath.value = inspection.sourceDir;
+    startupStatus.dataset.state = 'ready';
+    startupMessage.textContent = inspection.ready
+        ? '可直接启动 Web 服务'
+        : '启动时将安装依赖并构建';
     setCheck(
         dependencyState,
         inspection.hasDependencies ? 'ready' : 'missing',
@@ -92,9 +101,6 @@ function renderInspection(inspection) {
         ? `构建有效 · ${inspection.artifactCount} 个产物`
         : '需要构建';
     setCheck(buildState, inspection.hasCurrentBuild ? 'ready' : 'missing', buildText);
-    startupMessage.textContent = inspection.ready
-        ? '可直接启动 Web 服务'
-        : '启动时将安装依赖并构建';
     startService.disabled = false;
 }
 
