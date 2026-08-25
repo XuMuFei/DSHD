@@ -159,6 +159,8 @@ if (!hasSingleInstanceLock) {
         registerIpcHandlers();
         createTray();
         createWindow();
+    }).catch((error) => {
+        console.error('[dshd] bootstrap error:', error);
     });
 }
 
