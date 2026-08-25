@@ -122,9 +122,11 @@ async function performQuit() {
     state.cleanupStarted = true;
     state.quitting = true;
 
-    // Stop web service and any active commands
+    // Stop web service and every command process, including short-lived Git commands
+    const processes = new Set(state.activeProcesses);
+    if (state.activeCommandProcess) processes.add(state.activeCommandProcess);
     await Promise.all([
-        stopProcessTree(state.activeCommandProcess),
+        ...Array.from(processes, process => stopProcessTree(process)),
         stopWebProcess()
     ]);
 
@@ -141,9 +143,10 @@ async function performQuit() {
 
 // ── Single instance lock ──────────────────────────────────────────────────
 
+let hasSingleInstanceLock = false;
 try {
-    const hasLock = app.requestSingleInstanceLock();
-    if (hasLock) {
+    hasSingleInstanceLock = app.requestSingleInstanceLock();
+    if (hasSingleInstanceLock) {
         app.on('second-instance', () => {
             if (state.mainWindow) {
                 state.mainWindow.show();
@@ -152,16 +155,21 @@ try {
         });
     }
 } catch {
-    // Lock unavailable — proceed without second-instance handling.
+    // Lock unavailable - treat as not having the lock
+    hasSingleInstanceLock = false;
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
-    registerIpcHandlers();
-    createTray();
-    createWindow();
-});
+if (!hasSingleInstanceLock) {
+    app.quit();
+} else {
+    app.whenReady().then(() => {
+        registerIpcHandlers();
+        createTray();
+        createWindow();
+    });
+}
 
 // ── App lifecycle ─────────────────────────────────────────────────────────
 
@@ -172,6 +180,7 @@ app.on('window-all-closed', () => {
 
 // Handle before-quit for cleanup (e.g., Cmd+Q on macOS or system shutdown)
 app.on('before-quit', (event) => {
+    if (!hasSingleInstanceLock) return;
     if (!state.quitting) {
         event.preventDefault();
         performQuit();
