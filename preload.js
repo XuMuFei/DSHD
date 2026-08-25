@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('desktopApi', {
     clearLogs: () => ipcRenderer.invoke('desktop:clear-logs'),
     getState: () => ipcRenderer.invoke('desktop:get-state'),
     selectSource: () => ipcRenderer.invoke('desktop:select-source'),
+    cloneSource: () => ipcRenderer.invoke('desktop:clone-source'),
     start: (sourceDir) => ipcRenderer.invoke('desktop:start', sourceDir),
     checkForUpdate: () => ipcRenderer.invoke('desktop:check-update'),
     applyUpdate: () => ipcRenderer.invoke('desktop:apply-update'),

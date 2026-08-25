@@ -147,7 +147,7 @@ function updateStatus(status) {
         chip.dataset.phase = status.phase;
     });
     setProgress(status.progress, status.message);
-    const busy = ['preparing', 'updating', 'installing', 'building', 'starting'].includes(status.phase);
+    const busy = ['cloning', 'preparing', 'updating', 'installing', 'building', 'starting'].includes(status.phase);
     if (!serviceReady && (busy || status.phase === 'error')) startupProgress.hidden = false;
     if (serviceReady) {
         serviceOverlay.hidden = !['updating', 'installing', 'building', 'starting'].includes(status.phase);
@@ -192,7 +192,32 @@ async function loadInfo() {
 
 async function loadInitialState() {
     try {
-        renderInspection(await window.desktopApi.getState());
+        const inspection = await window.desktopApi.getState();
+        if (inspection.needsClone) {
+            // Auto-clone: first time setup, no deepseek-harness found
+            setBusy(true);
+            startupMessage.textContent = '正在自动克隆 deepseek-harness 源码仓库...';
+            startupStatus.dataset.state = 'idle';
+            setCheck(dependencyState, 'idle', '克隆中');
+            setCheck(buildState, 'idle', '克隆中');
+            startupProgress.hidden = false;
+            setProgress(10, '正在克隆...');
+            try {
+                const cloned = await window.desktopApi.cloneSource();
+                renderInspection(cloned);
+                showToast('deepseek-harness 已克隆就绪，点击"启动服务"继续', 'success');
+            } catch (error) {
+                startupMessage.textContent = '自动克隆失败，请手动选择源码目录';
+                startupStatus.dataset.state = 'error';
+                showToast(`克隆失败：${errorMessage(error)}。请手动选择目录`, 'error');
+                selectedSourceDir = '';
+                startService.disabled = true;
+            } finally {
+                setBusy(false);
+            }
+            return;
+        }
+        renderInspection(inspection);
     } catch (error) {
         showToast(errorMessage(error), 'error');
     }

@@ -470,6 +470,7 @@ svg {
     background: var(--danger);
 }
 
+.endpoint-chip[data-phase="cloning"] .endpoint-dot,
 .endpoint-chip[data-phase="preparing"] .endpoint-dot,
 .endpoint-chip[data-phase="updating"] .endpoint-dot,
 .endpoint-chip[data-phase="installing"] .endpoint-dot,
@@ -541,6 +542,7 @@ svg {
 
 .service-status[data-phase="ready"] > span { background: var(--green-bright); }
 .service-status[data-phase="error"] > span { background: var(--danger); }
+.service-status[data-phase="cloning"] > span,
 .service-status[data-phase="checking"] > span,
 .service-status[data-phase="updating"] > span,
 .service-status[data-phase="installing"] > span,
