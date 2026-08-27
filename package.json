@@ -1,19 +1,26 @@
 {
     "name": "dshd",
-    "version": "1.2.3",
+    "version": "2.0.0",
     "description": "Windows desktop client for DeepSeek Harness Web",
     "author": "DeepSeek",
     "private": true,
-    "main": "main.js",
+    "main": "dist/main.js",
     "scripts": {
-        "start": "electron .",
-        "dist": "electron-builder --win nsis --config.directories.output=release",
-        "dist:mac": "electron-builder --mac dmg --config.directories.output=release",
-        "dist:dir": "electron-builder --win dir"
+        "build:ts": "tsc",
+        "build:ts:watch": "tsc --watch",
+        "copy:static": "node scripts/copy-static.js",
+        "build": "npm run build:ts && npm run copy:static",
+        "start": "npm run build && electron .",
+        "dist": "npm run build && electron-builder --win nsis --config.directories.output=release",
+        "dist:mac": "npm run build && electron-builder --mac dmg --config.directories.output=release",
+        "dist:dir": "npm run build && electron-builder --win dir",
+        "typecheck": "tsc --noEmit"
     },
     "devDependencies": {
+        "@types/node": "^20.14.0",
         "electron": "^37.2.6",
-        "electron-builder": "^26.0.12"
+        "electron-builder": "^26.0.12",
+        "typescript": "^5.4.0"
     },
     "build": {
         "appId": "ai.deepseek.dshd",
@@ -21,14 +28,8 @@
         "electronDist": "node_modules/electron/dist",
         "asar": true,
         "files": [
-            "main.js",
-            "preload.js",
-            "renderer.js",
-            "shell.css",
-            "shell.html",
-            "package.json",
-            "lib/**",
-            "build/icon.png"
+            "dist/**/*",
+            "package.json"
         ],
         "mac": {
             "icon": "build/icons/mac/icon.icns",
@@ -77,5 +78,8 @@
     },
     "allowScripts": {
         "electron@37.10.3": true
+    },
+    "dependencies": {
+        "glob": "^13.0.6"
     }
 }

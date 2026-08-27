@@ -1,38 +1,50 @@
 // ── IPC handler registration ──────────────────────────────────────────────
 
-const { app, ipcMain, dialog } = require('electron');
-const { WEB_URL, WEB_ENDPOINT } = require('./constants');
-const state = require('./state');
-const { sendStatus, clearLogBuffer } = require('./utils');
-const { preferredSourceDir, preferredDefaultCloneDir, defaultCloneDir, cloneHarness, inspectSource, saveSourceDir } = require('./source-manager');
-const { runPnpm, startPreparedWebService } = require('./process-manager');
-const { checkForUpdates, applyUpdate } = require('./git-updater');
-const { BUILD_RECORD_PATH, PHASE, PROGRESS } = require('./constants');
+import { app, ipcMain, dialog } from 'electron';
+
+import { WEB_URL, WEB_ENDPOINT, BUILD_RECORD_PATH, PHASE, PROGRESS } from './constants';
+import { state } from './state';
+import { sendStatus, clearLogBuffer } from './utils';
+import {
+    preferredSourceDir, preferredDefaultCloneDir, defaultCloneDir,
+    cloneHarness, inspectSource, saveSourceDir
+} from './source-manager';
+import { runPnpm, startPreparedWebService } from './process-manager';
+import { checkForUpdates, applyUpdate } from './git-updater';
+import type { SourceInspection, IpcStartResponse, DesktopInfo } from './types';
 
 // ── Operation lock ────────────────────────────────────────────────────────
 
-async function withOperation(name, operation) {
+async function withOperation<T>(
+    name: string,
+    operation: () => Promise<T>,
+    options: { failurePhase?: string } = {}
+): Promise<T> {
     if (state.activeOperation) throw new Error(`正在执行"${state.activeOperation}"，请稍候。`);
     state.activeOperation = name;
     try {
         return await operation();
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        sendStatus(PHASE.ERROR, message);
+        // `failurePhase` lets a read-only operation (e.g. update check) avoid
+        // painting the service-status dot red: the running 3080 service is
+        // unaffected by a failed check, so the failure surfaces as a toast
+        // and a READY-status message instead of an ERROR.
+        sendStatus(options.failurePhase ?? PHASE.ERROR, message);
         throw error;
     } finally {
-        state.activeOperation = undefined;
+        state.activeOperation = null;
     }
 }
 
 // ── Prepare and start pipeline ────────────────────────────────────────────
 
-async function prepareAndStart(selectedSourceDir) {
+async function prepareAndStart(selectedSourceDir: string): Promise<IpcStartResponse> {
     clearLogBuffer();
     sendStatus(PHASE.PREPARING, '正在检查依赖和构建状态', PROGRESS.PREPARE);
 
     const inspection = await inspectSource(selectedSourceDir);
-    if (!inspection.valid) throw new Error(inspection.error);
+    if (!inspection.valid || !inspection.sourceDir) throw new Error(inspection.error);
     state.sourceDir = inspection.sourceDir;
     saveSourceDir(state.sourceDir);
 
@@ -55,11 +67,11 @@ async function prepareAndStart(selectedSourceDir) {
 
 // ── Register handlers ────────────────────────────────────────────────────
 
-function registerIpcHandlers() {
-    ipcMain.handle('desktop:get-info', () => ({
+export function registerIpcHandlers(): void {
+    ipcMain.handle('desktop:get-info', (): DesktopInfo => ({
         version: app.getVersion(),
         host: WEB_ENDPOINT.hostname,
-        port: WEB_ENDPOINT.port,
+        port: Number(WEB_ENDPOINT.port) || 3080,
         url: WEB_URL
     }));
 
@@ -70,50 +82,26 @@ function registerIpcHandlers() {
         return [];
     });
 
-    ipcMain.handle('desktop:get-state', async () => {
+    ipcMain.handle('desktop:get-state', async (): Promise<SourceInspection> => {
         const candidate = preferredSourceDir();
         if (candidate) return inspectSource(candidate);
-
-        // Check if default clone dir exists and is valid
         const defaultCandidate = preferredDefaultCloneDir();
         if (defaultCandidate) {
             state.sourceDir = defaultCandidate;
             saveSourceDir(defaultCandidate);
             return inspectSource(defaultCandidate);
         }
-
-        return {
-            valid: false,
-            sourceDir: '',
-            needsClone: true,
-            cloneDir: defaultCloneDir()
-        };
+        return { valid: false, sourceDir: '', needsClone: true, cloneDir: defaultCloneDir() };
     });
 
-    ipcMain.handle('desktop:select-source', async () => {
-        const result = await dialog.showOpenDialog(state.mainWindow, {
-            title: '选择 deepseek-harness 源码目录',
-            defaultPath: state.sourceDir || preferredSourceDir() || undefined,
-            properties: ['openDirectory']
-        });
-        if (result.canceled || result.filePaths.length === 0) return { canceled: true };
-        const inspection = await inspectSource(result.filePaths[0]);
-        if (inspection.valid) {
-            state.sourceDir = inspection.sourceDir;
-            saveSourceDir(state.sourceDir);
-        }
-        return inspection;
-    });
-
-    ipcMain.handle('desktop:clone-source', async () => {
+    ipcMain.handle('desktop:clone-source', async (): Promise<SourceInspection> => {
         clearLogBuffer();
         sendStatus(PHASE.CLONING, '正在克隆 deepseek-harness 源码仓库', 10);
         try {
             const clonedDir = await cloneHarness();
             state.sourceDir = clonedDir;
             sendStatus(PHASE.PREPARING, '克隆完成，正在验证', 95);
-            const inspection = await inspectSource(clonedDir);
-            return inspection;
+            return await inspectSource(clonedDir);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             sendStatus(PHASE.ERROR, message);
@@ -121,14 +109,27 @@ function registerIpcHandlers() {
         }
     });
 
-    ipcMain.handle('desktop:start', (_event, selectedSourceDir) =>
+    ipcMain.handle('desktop:select-source', async (): Promise<SourceInspection | { canceled: true }> => {
+        const result = await dialog.showOpenDialog(state.mainWindow!, {
+            title: '选择 deepseek-harness 源码目录',
+            defaultPath: state.sourceDir || preferredSourceDir() || undefined,
+            properties: ['openDirectory']
+        });
+        if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+        const inspection = await inspectSource(result.filePaths[0]);
+        if (inspection.valid && inspection.sourceDir) {
+            state.sourceDir = inspection.sourceDir;
+            saveSourceDir(state.sourceDir);
+        }
+        return inspection;
+    });
+
+    ipcMain.handle('desktop:start', async (_event, selectedSourceDir: string): Promise<IpcStartResponse> =>
         withOperation('启动服务', () => prepareAndStart(selectedSourceDir)));
 
     ipcMain.handle('desktop:check-update', () =>
-        withOperation('检查更新', checkForUpdates));
+        withOperation('检查更新', checkForUpdates, { failurePhase: PHASE.READY }));
 
-    ipcMain.handle('desktop:apply-update', () =>
+    ipcMain.handle('desktop:apply-update', (): Promise<{ url: string; sourceDir: string }> =>
         withOperation('应用更新', applyUpdate));
 }
-
-module.exports = { registerIpcHandlers };

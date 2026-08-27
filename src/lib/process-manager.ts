@@ -1,19 +1,21 @@
 // ── Process management ────────────────────────────────────────────────────
 
-const { execFile, spawn } = require('node:child_process');
-const http = require('node:http');
-const state = require('./state');
-const {
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import http from 'node:http';
+
+import { state } from './state';
+import {
     CMD_EXE, COMMAND_TIMEOUT_MS, WEB_START_TIMEOUT_MS,
-    WEB_URL, WEB_POLL_INTERVAL_MS, WEB_POLL_TIMEOUT_MS,
+    WEB_URL, WEB_ENDPOINT, WEB_POLL_INTERVAL_MS, WEB_POLL_TIMEOUT_MS,
     STREAM_POLL_TIMEOUT_MS, STDERR_MAX_LENGTH, MAX_BUFFER_BYTES,
     PROBE_TIMEOUT_MS, MAX_WEB_RESTART_ATTEMPTS, PHASE
-} = require('./constants');
-const { appendLog, formatCommand, sendStatus } = require('./utils');
+} from './constants';
+import { appendLog, formatCommand, sendStatus } from './utils';
+import type { ExecResult, WebServerProbeResult } from './types';
 
 // ── Run a file (exec) ─────────────────────────────────────────────────────
 
-function runFile(file, args, cwd) {
+export function runFile(file: string, args: readonly string[], cwd: string): Promise<ExecResult> {
     return new Promise((resolve, reject) => {
         appendLog('CMD', formatCommand(file, args));
         const child = execFile(file, args, {
@@ -40,7 +42,7 @@ function runFile(file, args, cwd) {
 
 // ── Stop a process tree ──────────────────────────────────────────────────
 
-function stopProcessTree(child) {
+export function stopProcessTree(child: ChildProcess | null): Promise<void> {
     if (!child || child.killed) return Promise.resolve();
     if (process.platform !== 'win32') {
         child.kill();
@@ -53,9 +55,57 @@ function stopProcessTree(child) {
     });
 }
 
+// ── Port-based orphan cleanup (Windows) ───────────────────────────────────
+// The web process is spawned as `cmd.exe → pnpm.cmd → node(dsh)`. The cmd
+// wrapper is what we track, but a Windows batch script can detach: the
+// batch interpreter exits, and the node(dsh) grandchild gets reparented.
+// `taskkill /t` from the cmd wrapper's PID then does NOT reach the actual
+// port-3080 owner, so quit leaks the listener. As a safety net, look up
+// whatever PID is currently LISTENING on the web port and kill it directly.
+// Gated by `webProcessOwned` so we never kill an unrelated service that
+// happened to occupy the port (e.g., a manually-started external DSH).
+
+/** Find the PID currently LISTENING on `port` (TCP). Returns null if none. */
+function findListeningPid(port: number): Promise<number | null> {
+    if (process.platform !== 'win32') return Promise.resolve(null);
+    return new Promise((resolve) => {
+        execFile('netstat.exe', ['-ano', '-p', 'tcp'], {
+            windowsHide: true,
+            maxBuffer: MAX_BUFFER_BYTES,
+        }, (error, stdout) => {
+            if (error || !stdout) { resolve(null); return; }
+            const portSuffix = `:${port}`;
+            for (const line of stdout.split(/\r?\n/)) {
+                // netstat -ano columns: Proto LocalAddress ForeignAddress State PID
+                const cols = line.trim().split(/\s+/);
+                if (cols.length < 5) continue;
+                const local = cols[1] ?? '';
+                if (!local.endsWith(portSuffix)) continue;
+                if (cols[3] !== 'LISTENING') continue;
+                const pid = Number.parseInt(cols[4] ?? '', 10);
+                if (!Number.isFinite(pid) || pid <= 0) continue;
+                if (pid === process.pid) continue; // never kill ourselves
+                resolve(pid);
+                return;
+            }
+            resolve(null);
+        });
+    });
+}
+
+/** Kill a PID and its descendants (Windows). Resolves regardless of outcome. */
+function killPidTree(pid: number): Promise<void> {
+    if (process.platform !== 'win32') return Promise.resolve();
+    return new Promise((resolve) => {
+        execFile('taskkill.exe', ['/pid', String(pid), '/t', '/f'], {
+            windowsHide: true,
+        }, () => resolve());
+    });
+}
+
 // ── Run pnpm ──────────────────────────────────────────────────────────────
 
-function runPnpm(args, cwd) {
+export function runPnpm(args: readonly string[], cwd: string): Promise<void> {
     return new Promise((resolve, reject) => {
         appendLog('CMD', formatCommand('pnpm.cmd', args));
         const child = spawn(CMD_EXE, ['/d', '/s', '/c', 'pnpm.cmd', ...args], {
@@ -72,7 +122,7 @@ function runPnpm(args, cwd) {
             if (settled) return;
             settled = true;
             state.activeProcesses.delete(child);
-            state.activeCommandProcess = undefined;
+            state.activeCommandProcess = null;
             void stopProcessTree(child);
             reject(new Error(`pnpm ${args.join(' ')} 执行超过 ${COMMAND_TIMEOUT_MS / 60000} 分钟。`));
         }, COMMAND_TIMEOUT_MS);
@@ -92,7 +142,7 @@ function runPnpm(args, cwd) {
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
-            state.activeCommandProcess = undefined;
+            state.activeCommandProcess = null;
             reject(error);
         });
         child.once('exit', (code, signal) => {
@@ -100,7 +150,7 @@ function runPnpm(args, cwd) {
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
-            state.activeCommandProcess = undefined;
+            state.activeCommandProcess = null;
             if (code === 0) {
                 appendLog('EXIT', 'code 0');
                 resolve();
@@ -112,9 +162,7 @@ function runPnpm(args, cwd) {
     });
 }
 
-// ── Run git clone with streaming output ────────────────────────────────────
-
-function runGitClone(url, targetDir, cwd) {
+export function runGitClone(url: string, targetDir: string, cwd: string): Promise<void> {
     return new Promise((resolve, reject) => {
         appendLog('CMD', formatCommand('git.exe', ['clone', url, targetDir]));
         const child = spawn('git.exe', ['clone', url, targetDir], {
@@ -130,30 +178,22 @@ function runGitClone(url, targetDir, cwd) {
             if (settled) return;
             settled = true;
             state.activeProcesses.delete(child);
-            state.activeCommandProcess = undefined;
+            state.activeCommandProcess = null;
             void stopProcessTree(child);
             reject(new Error(`git clone 执行超过 ${COMMAND_TIMEOUT_MS / 60000} 分钟。`));
         }, COMMAND_TIMEOUT_MS);
-
-        child.stdout.on('data', (chunk) => {
-            appendLog('OUT', chunk.toString());
-        });
-        child.stderr.on('data', (chunk) => {
+        child.stdout?.on('data', (chunk: Buffer) => appendLog('OUT', chunk.toString()));
+        child.stderr?.on('data', (chunk: Buffer) => {
             const output = chunk.toString();
             stderr = `${stderr}${output}`.slice(-STDERR_MAX_LENGTH);
             appendLog('ERR', output);
-            // git clone writes progress to stderr
-            const trimmed = output.trimEnd();
-            if (trimmed) {
-                console.log(`[git] ${trimmed}`);
-            }
         });
         child.once('error', (error) => {
             state.activeProcesses.delete(child);
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
-            state.activeCommandProcess = undefined;
+            state.activeCommandProcess = null;
             reject(error);
         });
         child.once('exit', (code, signal) => {
@@ -161,7 +201,7 @@ function runGitClone(url, targetDir, cwd) {
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
-            state.activeCommandProcess = undefined;
+            state.activeCommandProcess = null;
             if (code === 0) {
                 appendLog('EXIT', 'code 0');
                 resolve();
@@ -175,11 +215,11 @@ function runGitClone(url, targetDir, cwd) {
 
 // ── Web process ───────────────────────────────────────────────────────────
 
-function startWebProcess(selectedSourceDir) {
+function startWebProcess(selectedSourceDir: string): void {
     state.webExitMessage = undefined;
     state.expectedWebStop = false;
     appendLog('CMD', formatCommand('pnpm.cmd', ['dsh', 'web', '--no-open']));
-    state.webProcess = spawn(CMD_EXE, [
+    const proc = spawn(CMD_EXE, [
         '/d', '/s', '/c', 'pnpm.cmd', 'dsh', 'web', '--no-open'
     ], {
         cwd: selectedSourceDir,
@@ -187,20 +227,21 @@ function startWebProcess(selectedSourceDir) {
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe']
     });
+    state.webProcess = proc;
     state.webProcessSourceDir = selectedSourceDir;
-    state.webProcess.stdout.on('data', (chunk) => {
+    proc.stdout?.on('data', (chunk) => {
         appendLog('OUT', chunk.toString());
         console.log(`[dsh] ${chunk.toString().trimEnd()}`);
     });
-    state.webProcess.stderr.on('data', (chunk) => {
+    proc.stderr?.on('data', (chunk) => {
         appendLog('ERR', chunk.toString());
         console.error(`[dsh] ${chunk.toString().trimEnd()}`);
     });
-    state.webProcess.once('error', (error) => {
+    proc.once('error', (error) => {
         state.webExitMessage = `启动 Web 服务失败：${error.message}`;
     });
-    state.webProcess.once('exit', (code, signal) => {
-        state.webProcess = undefined;
+    proc.once('exit', (code, signal) => {
+        state.webProcess = null;
         state.webProcessSourceDir = undefined;
         state.webProcessOwned = false;
         if (state.expectedWebStop || state.quitting) return;
@@ -215,11 +256,9 @@ function startWebProcess(selectedSourceDir) {
             startWebProcess(selectedSourceDir);
             state.webProcessOwned = true;
             waitForWebServer().then(() => {
-                sendStatus(PHASE.READY, '服务运行中', 100);
-                state.webRestartAttempts = 0;
-            }).catch(() => {
-                // If restart fails, show error
-                sendStatus(PHASE.ERROR, state.webExitMessage || 'Web 服务重启失败');
+                sendStatus(PHASE.READY, 'Web 服务运行中', 100);
+            }).catch((restartError) => {
+                sendStatus(PHASE.ERROR, `自动重试失败：${restartError instanceof Error ? restartError.message : String(restartError)}`);
             });
         } else {
             sendStatus(PHASE.ERROR, state.webExitMessage);
@@ -227,29 +266,42 @@ function startWebProcess(selectedSourceDir) {
     });
 }
 
-async function stopWebProcess() {
-    if (!state.webProcess) return;
+export async function stopWebProcess(): Promise<void> {
     state.expectedWebStop = true;
-    const child = state.webProcess;
-    state.webProcess = undefined;
+    const tracked = state.webProcess;
+    const owned = state.webProcessOwned;
+    state.webProcess = null;
     state.webProcessSourceDir = undefined;
     state.webProcessOwned = false;
-    await stopProcessTree(child);
+
+    // 1) Kill the tracked cmd wrapper tree (covers the common case).
+    if (tracked) {
+        await stopProcessTree(tracked);
+    }
+
+    // 2) Port-3080 fallback: catch a reparented orphan node(dsh) that
+    //    taskkill /t couldn't reach. Only when we owned the process, to
+    //    avoid killing an unrelated service on the same port.
+    if (owned && process.platform === 'win32') {
+        // Brief settle so taskkill can release the socket before we re-check.
+        await new Promise((r) => setTimeout(r, 200));
+        const orphan = await findListeningPid(Number(WEB_ENDPOINT.port));
+        if (orphan !== null) {
+            appendLog('CMD',
+                `port-fallback: killing orphan listener pid=${orphan} on port=${WEB_ENDPOINT.port}`);
+            await killPidTree(orphan);
+        }
+    }
 }
 
 // ── Web server probe / wait ───────────────────────────────────────────────
 
-/**
- * Probes whether port 3080 is already serving HTTP.
- * @returns {Promise<{occupied: boolean, isDsh: boolean}>}
- */
-function probeWebServer() {
+export function probeWebServer(): Promise<WebServerProbeResult> {
     return new Promise((resolve) => {
         let settled = false;
-        const guard = (value) => { if (!settled) { settled = true; resolve(value); } };
+        const guard = (value: WebServerProbeResult) => { if (!settled) { settled = true; resolve(value); } };
 
         const request = http.get(WEB_URL, (response) => {
-            // Collect a small chunk to identify the service
             let body = '';
             const finish = () => {
                 const isDsh = body.includes('deepseek') || body.includes('dsh')
@@ -272,15 +324,15 @@ function probeWebServer() {
     });
 }
 
-function waitForWebServer() {
+export function waitForWebServer(): Promise<void> {
     const startedAt = Date.now();
     let pollCount = 0;
     const maxPolls = Math.ceil(WEB_START_TIMEOUT_MS / WEB_POLL_INTERVAL_MS);
 
     return new Promise((resolve, reject) => {
         let settled = false;
-        const guardResolve = (value) => { if (!settled) { settled = true; resolve(value); } };
-        const guardReject = (error) => { if (!settled) { settled = true; reject(error); } };
+        const guardResolve = () => { if (!settled) { settled = true; resolve(); } };
+        const guardReject = (error: Error) => { if (!settled) { settled = true; reject(error); } };
 
         const poll = () => {
             if (state.webExitMessage && !state.expectedWebStop) {
@@ -313,7 +365,9 @@ function waitForWebServer() {
     });
 }
 
-async function startPreparedWebService(selectedSourceDir) {
+// ── Start prepared web service ────────────────────────────────────────────
+
+export async function startPreparedWebService(selectedSourceDir: string): Promise<void> {
     if (state.webProcess) {
         if (state.webProcessSourceDir !== selectedSourceDir) {
             throw new Error('当前已有其他源码目录的 Web 服务正在运行，请先停止该服务。');
@@ -326,7 +380,6 @@ async function startPreparedWebService(selectedSourceDir) {
     const probe = await probeWebServer();
     if (probe.occupied) {
         if (probe.isDsh) {
-            // External service: cannot verify ownership or source directory
             state.webProcess = null;
             state.webProcessSourceDir = undefined;
             state.webProcessOwned = false;
@@ -341,15 +394,3 @@ async function startPreparedWebService(selectedSourceDir) {
     await waitForWebServer();
     sendStatus(PHASE.READY, '服务运行中', 100);
 }
-
-module.exports = {
-    runFile,
-    runPnpm,
-    runGitClone,
-    stopProcessTree,
-    startWebProcess,
-    stopWebProcess,
-    probeWebServer,
-    waitForWebServer,
-    startPreparedWebService
-};

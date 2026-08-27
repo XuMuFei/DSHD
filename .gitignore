@@ -3,3 +3,11 @@ dist/
 release/
 out/
 .pnpm-store/
+
+# Electron logs
+electron-debug.log
+electron_crash.log
+electron_out.txt
+
+# pnpm workspace local config
+pnpm-workspace.yaml

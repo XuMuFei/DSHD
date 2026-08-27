@@ -1,17 +1,19 @@
 // ── Git update operations ─────────────────────────────────────────────────
 
-const { runFile, runPnpm, stopWebProcess, startPreparedWebService } = require('./process-manager');
-const { inspectSource } = require('./source-manager');
-const { sendStatus, clearLogBuffer } = require('./utils');
-const { BUILD_RECORD_PATH, PHASE } = require('./constants');
-const state = require('./state');
+import { runFile, runPnpm, stopWebProcess, startPreparedWebService } from './process-manager';
+import { inspectSource } from './source-manager';
+import { sendStatus, clearLogBuffer } from './utils';
+import { BUILD_RECORD_PATH, PHASE } from './constants';
+import { state } from './state';
+import type { PendingUpdate } from './types';
 
-async function checkForUpdates() {
+// ── Check for updates ──────────────────────────────────────────────────────
+
+export async function checkForUpdates(): Promise<PendingUpdate> {
     if (!state.sourceDir) throw new Error('尚未选择源码目录。');
     clearLogBuffer();
     sendStatus(PHASE.CHECKING, '正在检查 Git 更新', 15);
 
-    // Use stored upstream or fallback
     let upstream = 'origin/master';
     try {
         const result = await runFile('git.exe', [
@@ -19,7 +21,7 @@ async function checkForUpdates() {
         ], state.sourceDir);
         upstream = result.stdout.trim() || upstream;
     } catch {
-        // 未设置上游分支时继续检查 origin/master。
+        // 未设置上游分支时继续检查 origin/master
     }
 
     await runFile('git.exe', ['fetch', '--quiet', '--prune', 'origin'], state.sourceDir);
@@ -31,7 +33,7 @@ async function checkForUpdates() {
     ]);
 
     const behind = Number.parseInt(behindResult.stdout.trim(), 10);
-    const result = {
+    const result: PendingUpdate = {
         hasUpdate: behind > 0,
         behind,
         upstream,
@@ -39,12 +41,14 @@ async function checkForUpdates() {
         latestCommit: latestResult.stdout.trim()
     };
 
-    state.pendingUpdate = result.hasUpdate ? result : undefined;
+    state.pendingUpdate = result.hasUpdate ? result : null;
     sendStatus(PHASE.READY, result.hasUpdate ? `发现 ${behind} 个新提交` : '当前已是最新版本', 100);
     return result;
 }
 
-async function applyUpdate() {
+// ── Apply update ──────────────────────────────────────────────────────────
+
+export async function applyUpdate(): Promise<{ url: string; sourceDir: string }> {
     if (!state.sourceDir || !state.pendingUpdate) throw new Error('没有可应用的更新。');
     clearLogBuffer();
 
@@ -90,7 +94,7 @@ async function applyUpdate() {
         }
 
         await startPreparedWebService(state.sourceDir);
-        state.pendingUpdate = undefined;
+        state.pendingUpdate = null;
         sendStatus(PHASE.READY, '更新完成');
         return { url: 'http://127.0.0.1:3080/', sourceDir: state.sourceDir };
     } catch (error) {
@@ -100,15 +104,9 @@ async function applyUpdate() {
             try {
                 await startPreparedWebService(state.sourceDir);
             } catch (recoveryError) {
-                // Log recovery failure but throw the original error
                 console.error('服务恢复失败:', recoveryError);
             }
         }
         throw error;
     }
 }
-
-module.exports = {
-    checkForUpdates,
-    applyUpdate
-};

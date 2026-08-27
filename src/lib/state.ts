@@ -1,62 +1,33 @@
 // ── Shared mutable state ──────────────────────────────────────────────────
 
-/** @type {import('electron').BrowserWindow | null} */
-let mainWindow = null;
+import type { BrowserWindow } from 'electron';
+import type { ChildProcess } from 'node:child_process';
+import type { AppState, PendingUpdate } from './types';
 
-/** @type {string} */
+// ── Internal state variables ──────────────────────────────────────────────
+
+let mainWindow: BrowserWindow | null = null;
 let sourceDir = '';
-
-/** @type {import('node:child_process').ChildProcess | null} */
-let webProcess = null;
-
-/** @type {import('node:child_process').ChildProcess | null} */
-let activeCommandProcess = null;
-
-/** @type {Set<import('node:child_process').ChildProcess>} */
-let activeProcesses = new Set();
-
-/** @type {string | undefined} */
-let webProcessSourceDir = undefined;
-
-/** @type {boolean} */
+let webProcess: ChildProcess | null = null;
+let activeCommandProcess: ChildProcess | null = null;
+let activeProcesses = new Set<ChildProcess>();
+let webProcessSourceDir: string | undefined = undefined;
 let webProcessOwned = false;
-
-/** @type {string | null} */
-let activeOperation = null;
-
-/** @type {object | null} */
-let pendingUpdate = null;
-
-/** @type {boolean} */
+let activeOperation: string | null = null;
+let pendingUpdate: PendingUpdate | null = null;
 let expectedWebStop = false;
-
-/** @type {string | undefined} */
-let webExitMessage = undefined;
-
-/** @type {boolean} */
+let webExitMessage: string | undefined = undefined;
 let quitting = false;
-
-/** @type {boolean} */
 let cleanupComplete = false;
-
-/** @type {boolean} */
 let cleanupStarted = false;
-
-/** @type {string[]} */
-let commandLogs = [];
-
-/** @type {number} */
+let commandLogs: string[] = [];
 let webRestartAttempts = 0;
+let cachedCommit: string | undefined = undefined;
+let cachedSourceDir: string | undefined = undefined;
 
-/** @type {string | undefined} */
-let cachedCommit = undefined;
+// ── Reset function ────────────────────────────────────────────────────────
 
-/** @type {string | undefined} */
-let cachedSourceDir = undefined;
-
-// ── Setters ───────────────────────────────────────────────────────────────
-
-function reset() {
+function reset(): void {
     mainWindow = null;
     sourceDir = '';
     webProcess = null;
@@ -77,7 +48,9 @@ function reset() {
     cachedSourceDir = undefined;
 }
 
-module.exports = {
+// ── State accessor object ─────────────────────────────────────────────────
+
+export const state: AppState = {
     get mainWindow() { return mainWindow; },
     set mainWindow(v) { mainWindow = v; },
 
@@ -130,6 +103,6 @@ module.exports = {
 
     get cachedSourceDir() { return cachedSourceDir; },
     set cachedSourceDir(v) { cachedSourceDir = v; },
-
-    reset
 };
+
+export { reset };

@@ -1,58 +1,64 @@
 // ── Source directory management ───────────────────────────────────────────
 
-const { createHash } = require('node:crypto');
-const { existsSync, globSync, mkdirSync, readFileSync, statSync, writeFileSync } = require('node:fs');
-const path = require('node:path');
-const { app } = require('electron');
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { globSync } from 'glob';
+import { app } from 'electron';
 
-const { EXPECTED_PACKAGE_NAME, BUILD_RECORD_PATH, CLIENT_ARTIFACT_PATTERNS, GIT_CLONE_URL } = require('./constants');
-const state = require('./state');
-const { runFile, runGitClone } = require('./process-manager');
+import { EXPECTED_PACKAGE_NAME, BUILD_RECORD_PATH, CLIENT_ARTIFACT_PATTERNS, GIT_CLONE_URL } from './constants';
+import { state } from './state';
+import type { SourceInspection, BuildRecord, ClientArtifactDigest } from './types';
+import { runFile, runGitClone } from './process-manager';
 
 // ── Settings ──────────────────────────────────────────────────────────────
 
-function settingsPath() {
+function settingsPath(): string {
     return path.join(app.getPath('userData'), 'settings.json');
 }
 
-function readSettings() {
+interface Settings {
+    sourceDir?: string;
+}
+
+function readSettings(): Settings {
     try {
-        return JSON.parse(readFileSync(settingsPath(), 'utf8'));
+        return JSON.parse(readFileSync(settingsPath(), 'utf8')) as Settings;
     } catch {
         return {};
     }
 }
 
-function saveSourceDir(selectedSourceDir) {
+export function saveSourceDir(selectedSourceDir: string): void {
     const file = settingsPath();
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, `${JSON.stringify({ sourceDir: selectedSourceDir }, null, 4)}\n`, 'utf8');
 }
 
-// ── Default clone location ─────────────────────────────────────────────────
-
-/**
- * Returns the default deepseek-harness clone directory.
- * Uses app.getPath('userData') (e.g. %APPDATA%/DSHD/) so that it works
- * in both development and packaged (ASAR) builds — the ASAR is read-only
- * and app.getAppPath() points to the archive itself, not a writable folder.
- */
-function defaultCloneDir() {
+export function defaultCloneDir(): string {
     return path.join(app.getPath('userData'), 'deepseek-harness');
 }
 
-async function cloneHarness() {
+export async function cloneHarness(): Promise<string> {
     const targetDir = defaultCloneDir();
     await runGitClone(GIT_CLONE_URL, targetDir, app.getPath('userData'));
     const validation = validateSourceDir(targetDir);
-    if (!validation.valid) throw new Error(`克隆完成但验证失败：${validation.error}`);
+    if (!validation.valid || !validation.sourceDir) {
+        throw new Error(`克隆完成但验证失败：${validation.error || '源码目录无效'}`);
+    }
     saveSourceDir(validation.sourceDir);
     return validation.sourceDir;
 }
 
 // ── Validation ────────────────────────────────────────────────────────────
 
-function validateSourceDir(candidate) {
+interface ValidationResult {
+    valid: boolean;
+    sourceDir?: string;
+    error?: string;
+}
+
+function validateSourceDir(candidate: unknown): ValidationResult {
     if (typeof candidate !== 'string' || candidate.trim() === '') {
         return { valid: false, error: '请选择 deepseek-harness 源码目录。' };
     }
@@ -62,7 +68,7 @@ function validateSourceDir(candidate) {
         return { valid: false, error: '所选目录中没有 package.json。' };
     }
     try {
-        const manifest = JSON.parse(readFileSync(packagePath, 'utf8'));
+        const manifest = JSON.parse(readFileSync(packagePath, 'utf8')) as { name?: string };
         if (manifest.name !== EXPECTED_PACKAGE_NAME) {
             return {
                 valid: false,
@@ -79,33 +85,29 @@ function validateSourceDir(candidate) {
     return { valid: true, sourceDir: resolved };
 }
 
-function preferredSourceDir() {
+export function preferredSourceDir(): string {
     const settings = readSettings();
     const candidates = [
-        process.env.DSH_SOURCE_DIR,
-        settings.sourceDir,
-        defaultCloneDir()
+        process.env['DSH_SOURCE_DIR'],
+        settings.sourceDir
     ];
     for (const candidate of candidates) {
         const result = validateSourceDir(candidate);
-        if (result.valid) return result.sourceDir;
+        if (result.valid && result.sourceDir) return result.sourceDir;
     }
     return '';
 }
 
-/**
- * Check if the default clone dir exists and is valid.
- * Returns the sourceDir if valid, empty string otherwise.
- */
-function preferredDefaultCloneDir() {
+export function preferredDefaultCloneDir(): string {
     const result = validateSourceDir(defaultCloneDir());
-    return result.valid ? result.sourceDir : '';
+    return result.valid && result.sourceDir ? result.sourceDir : '';
 }
 
 // ── Build record ──────────────────────────────────────────────────────────
 
-function clientArtifactDigest(selectedSourceDir) {
-    const paths = globSync(CLIENT_ARTIFACT_PATTERNS, { cwd: selectedSourceDir })
+export function clientArtifactDigest(selectedSourceDir: string): ClientArtifactDigest | undefined {
+    const patterns = [...CLIENT_ARTIFACT_PATTERNS];
+    const paths = globSync(patterns, { cwd: selectedSourceDir })
         .map(candidate => candidate.replaceAll('\\', '/'))
         .filter(candidate => statSync(path.resolve(selectedSourceDir, candidate)).isFile())
         .sort();
@@ -121,11 +123,11 @@ function clientArtifactDigest(selectedSourceDir) {
     return { fileCount: paths.length, sha256: digest.digest('hex') };
 }
 
-function readBuildRecord(selectedSourceDir) {
+export function readBuildRecord(selectedSourceDir: string): BuildRecord | undefined {
     const recordPath = path.join(selectedSourceDir, BUILD_RECORD_PATH);
     if (!existsSync(recordPath)) return undefined;
     try {
-        const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+        const record = JSON.parse(readFileSync(recordPath, 'utf8')) as BuildRecord;
         const commit = record?.environment?.DSH_CLIENT_COMMIT_HASH;
         const fileCount = record?.artifacts?.fileCount;
         const sha256 = record?.artifacts?.sha256;
@@ -136,7 +138,11 @@ function readBuildRecord(selectedSourceDir) {
             || !/^[0-9a-f]{64}$/.test(sha256)) {
             return undefined;
         }
-        return { commit: commit.toLowerCase(), fileCount, sha256 };
+        return {
+            formatVersion: 1,
+            environment: { DSH_CLIENT_COMMIT_HASH: commit.toLowerCase() },
+            artifacts: { fileCount, sha256 }
+        };
     } catch {
         return undefined;
     }
@@ -144,16 +150,16 @@ function readBuildRecord(selectedSourceDir) {
 
 // ── Source inspection ────────────────────────────────────────────────────
 
-async function inspectSource(candidate) {
+export async function inspectSource(candidate: unknown): Promise<SourceInspection> {
     const validation = validateSourceDir(candidate);
     if (!validation.valid) return validation;
 
-    const selectedSourceDir = validation.sourceDir;
+    const selectedSourceDir = validation.sourceDir!;
     const hasDependencies = existsSync(path.join(selectedSourceDir, 'node_modules', '.pnpm'));
     const buildRecord = readBuildRecord(selectedSourceDir);
 
     // Cache currentCommit to avoid spawning git on every call
-    let currentCommit;
+    let currentCommit: string | undefined;
     if (state.cachedSourceDir === selectedSourceDir && state.cachedCommit) {
         currentCommit = state.cachedCommit;
     } else {
@@ -168,39 +174,28 @@ async function inspectSource(candidate) {
     }
 
     // Cache digest: only compute when build record exists and commit matches
-    let digest;
-    const cacheKey = `${selectedSourceDir}:${currentCommit}`;
-    if (buildRecord && currentCommit && buildRecord.commit === currentCommit) {
+    let digest: ClientArtifactDigest | undefined;
+    if (buildRecord && currentCommit && buildRecord.environment.DSH_CLIENT_COMMIT_HASH === currentCommit) {
         digest = clientArtifactDigest(selectedSourceDir);
     }
 
     const hasCurrentBuild = buildRecord !== undefined
         && currentCommit !== undefined
-        && buildRecord.commit === currentCommit
+        && buildRecord.environment.DSH_CLIENT_COMMIT_HASH === currentCommit
         && digest !== undefined
-        && buildRecord.fileCount === digest.fileCount
-        && buildRecord.sha256 === digest.sha256;
+        && buildRecord.artifacts.fileCount === digest.fileCount
+        && buildRecord.artifacts.sha256 === digest.sha256;
 
     return {
         valid: true,
         sourceDir: selectedSourceDir,
         hasDependencies,
         hasCurrentBuild,
-        artifactCount: buildRecord?.fileCount,
-        buildCommit: buildRecord?.commit,
+        artifactCount: buildRecord?.artifacts.fileCount,
+        buildCommit: buildRecord?.environment.DSH_CLIENT_COMMIT_HASH,
         currentCommit,
         ready: hasDependencies && hasCurrentBuild
     };
 }
 
-module.exports = {
-    validateSourceDir,
-    preferredSourceDir,
-    preferredDefaultCloneDir,
-    defaultCloneDir,
-    cloneHarness,
-    saveSourceDir,
-    inspectSource,
-    readBuildRecord,
-    clientArtifactDigest
-};
+export { validateSourceDir };
