@@ -5,21 +5,32 @@ import { app, ipcMain, dialog } from 'electron';
 import { WEB_URL, WEB_ENDPOINT, BUILD_RECORD_PATH, PHASE, PROGRESS } from './constants';
 import { state } from './state';
 import { sendStatus, clearLogBuffer } from './utils';
-import { preferredSourceDir, inspectSource, saveSourceDir } from './source-manager';
+import {
+    preferredSourceDir, preferredDefaultCloneDir, defaultCloneDir,
+    cloneHarness, inspectSource, saveSourceDir
+} from './source-manager';
 import { runPnpm, startPreparedWebService } from './process-manager';
 import { checkForUpdates, applyUpdate } from './git-updater';
 import type { SourceInspection, IpcStartResponse, DesktopInfo } from './types';
 
 // ── Operation lock ────────────────────────────────────────────────────────
 
-async function withOperation<T>(name: string, operation: () => Promise<T>): Promise<T> {
+async function withOperation<T>(
+    name: string,
+    operation: () => Promise<T>,
+    options: { failurePhase?: string } = {}
+): Promise<T> {
     if (state.activeOperation) throw new Error(`正在执行"${state.activeOperation}"，请稍候。`);
     state.activeOperation = name;
     try {
         return await operation();
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        sendStatus(PHASE.ERROR, message);
+        // `failurePhase` lets a read-only operation (e.g. update check) avoid
+        // painting the service-status dot red: the running 3080 service is
+        // unaffected by a failed check, so the failure surfaces as a toast
+        // and a READY-status message instead of an ERROR.
+        sendStatus(options.failurePhase ?? PHASE.ERROR, message);
         throw error;
     } finally {
         state.activeOperation = null;
@@ -73,7 +84,29 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle('desktop:get-state', async (): Promise<SourceInspection> => {
         const candidate = preferredSourceDir();
-        return candidate ? inspectSource(candidate) : { valid: false, sourceDir: '' };
+        if (candidate) return inspectSource(candidate);
+        const defaultCandidate = preferredDefaultCloneDir();
+        if (defaultCandidate) {
+            state.sourceDir = defaultCandidate;
+            saveSourceDir(defaultCandidate);
+            return inspectSource(defaultCandidate);
+        }
+        return { valid: false, sourceDir: '', needsClone: true, cloneDir: defaultCloneDir() };
+    });
+
+    ipcMain.handle('desktop:clone-source', async (): Promise<SourceInspection> => {
+        clearLogBuffer();
+        sendStatus(PHASE.CLONING, '正在克隆 deepseek-harness 源码仓库', 10);
+        try {
+            const clonedDir = await cloneHarness();
+            state.sourceDir = clonedDir;
+            sendStatus(PHASE.PREPARING, '克隆完成，正在验证', 95);
+            return await inspectSource(clonedDir);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            sendStatus(PHASE.ERROR, message);
+            throw error;
+        }
     });
 
     ipcMain.handle('desktop:select-source', async (): Promise<SourceInspection | { canceled: true }> => {
@@ -95,7 +128,7 @@ export function registerIpcHandlers(): void {
         withOperation('启动服务', () => prepareAndStart(selectedSourceDir)));
 
     ipcMain.handle('desktop:check-update', () =>
-        withOperation('检查更新', checkForUpdates));
+        withOperation('检查更新', checkForUpdates, { failurePhase: PHASE.READY }));
 
     ipcMain.handle('desktop:apply-update', (): Promise<{ url: string; sourceDir: string }> =>
         withOperation('应用更新', applyUpdate));

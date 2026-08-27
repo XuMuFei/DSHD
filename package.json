@@ -1,6 +1,6 @@
 {
     "name": "dshd",
-    "version": "1.2.1",
+    "version": "2.0.0",
     "description": "Windows desktop client for DeepSeek Harness Web",
     "author": "DeepSeek",
     "private": true,
@@ -29,10 +29,7 @@
         "asar": true,
         "files": [
             "dist/**/*",
-            "shell.css",
-            "shell.html",
-            "package.json",
-            "build/icon.png"
+            "package.json"
         ],
         "mac": {
             "icon": "build/icons/mac/icon.icns",

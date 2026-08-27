@@ -26,7 +26,8 @@ const serviceStatus = $('service-status');
 const serviceMessage = $('service-message');
 const checkUpdate = $('check-update') as HTMLButtonElement;
 const workspaceShowLogs = $('workspace-show-logs') as HTMLButtonElement;
-const webContent = $('web-content') as HTMLIFrameElement;
+const workspaceRefresh = $('workspace-refresh') as HTMLButtonElement | null;
+const webContent = $('web-content') as WebviewElement;
 const serviceOverlay = $('service-overlay');
 const overlayMessage = $('overlay-message');
 const updateDialog = $('update-dialog');
@@ -133,6 +134,58 @@ function showWorkspace(result: { url: string; sourceDir: string }): void {
     webContent.src = result.url;
 }
 
+// ── Webview error handling ────────────────────────────────────────────────
+
+let webviewRetryCount = 0;
+const WEBVIEW_MAX_RETRIES = 3;
+
+function setupWebviewListeners(): void {
+    webContent.addEventListener('did-fail-load', (event) => {
+        const detail = (event as Event & { detail?: DidFailLoadEventDetail }).detail;
+        const errorDescription = detail?.errorDescription ?? '未知错误';
+        console.error(`[webview] did-fail-load: ${errorDescription} (${detail?.errorCode}) for ${detail?.validatedURL}`);
+        if (webviewRetryCount < WEBVIEW_MAX_RETRIES) {
+            webviewRetryCount++;
+            overlayMessage.textContent = `页面加载失败，正在重试 (${webviewRetryCount}/${WEBVIEW_MAX_RETRIES})...`;
+            serviceOverlay.hidden = false;
+            setTimeout(() => {
+                webContent.reload();
+            }, 1000 * webviewRetryCount);
+        } else {
+            serviceOverlay.hidden = false;
+            overlayMessage.textContent = `页面加载失败 (${errorDescription})，请检查 Web 服务状态或刷新重试。`;
+            serviceStatus.dataset.phase = 'error';
+            serviceMessage.textContent = '页面加载失败';
+            showToast(`Web 页面加载失败：${errorDescription}`, 'error');
+        }
+    });
+
+    webContent.addEventListener('crashed', () => {
+        console.error('[webview] crashed');
+        serviceOverlay.hidden = false;
+        overlayMessage.textContent = 'Web 页面崩溃，请刷新重试。';
+        serviceStatus.dataset.phase = 'error';
+        serviceMessage.textContent = '页面崩溃';
+        showToast('Web 页面崩溃，请刷新重试', 'error');
+    });
+
+    webContent.addEventListener('did-finish-load', () => {
+        webviewRetryCount = 0;
+        serviceOverlay.hidden = true;
+    });
+
+    webContent.addEventListener('did-start-loading', () => {
+        serviceOverlay.hidden = false;
+        overlayMessage.textContent = '正在加载页面...';
+    });
+
+    webContent.addEventListener('did-stop-loading', () => {
+        if (webviewRetryCount === 0) {
+            serviceOverlay.hidden = true;
+        }
+    });
+}
+
 function updateStatus(status: IpcStatusPayload): void {
     startupMessage.textContent = status.message;
     serviceMessage.textContent = status.message;
@@ -141,7 +194,7 @@ function updateStatus(status: IpcStatusPayload): void {
         chip.dataset.phase = status.phase;
     });
     setProgress(status.progress, status.message);
-    const busy = ['preparing', 'updating', 'installing', 'building', 'starting'].includes(status.phase);
+    const busy = ['cloning', 'preparing', 'updating', 'installing', 'building', 'starting'].includes(status.phase);
     if (!serviceReady && (busy || status.phase === 'error')) startupProgress.hidden = false;
     if (serviceReady) {
         serviceOverlay.hidden = !['updating', 'installing', 'building', 'starting'].includes(status.phase);
@@ -186,7 +239,29 @@ async function loadInfo(): Promise<void> {
 
 async function loadInitialState(): Promise<void> {
     try {
-        renderInspection(await window.desktopApi.getState());
+        const inspection = await window.desktopApi.getState();
+        if (inspection.needsClone) {
+            setBusy(true);
+            startupMessage.textContent = '正在自动克隆 deepseek-harness 源码仓库...';
+            setCheck(dependencyState, 'idle', '克隆中');
+            setCheck(buildState, 'idle', '克隆中');
+            startupProgress.hidden = false;
+            setProgress(10, '正在克隆...');
+            try {
+                const cloned = await window.desktopApi.cloneSource();
+                renderInspection(cloned);
+                showToast('deepseek-harness 已克隆就绪，点击“启动服务”继续');
+            } catch (error) {
+                startupMessage.textContent = '自动克隆失败，请手动选择源码目录';
+                showToast(`克隆失败：${errorMessage(error)}。请手动选择目录`, 'error');
+                selectedSourceDir = '';
+                startService.disabled = true;
+            } finally {
+                setBusy(false);
+            }
+            return;
+        }
+        renderInspection(inspection);
     } catch (error) {
         showToast(errorMessage(error), 'error');
     }
@@ -196,6 +271,11 @@ async function loadInitialState(): Promise<void> {
 
 setupShowLogs.addEventListener('click', showLogs);
 workspaceShowLogs.addEventListener('click', showLogs);
+workspaceRefresh?.addEventListener('click', () => {
+    webviewRetryCount = 0;
+    webContent.reload();
+    showToast('正在刷新页面...');
+});
 closeLogs.addEventListener('click', hideLogs);
 logScrim.addEventListener('click', hideLogs);
 clearLogs.addEventListener('click', async () => {
@@ -285,6 +365,8 @@ window.addEventListener('beforeunload', () => {
 });
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
+
+setupWebviewListeners();
 
 void loadInfo().catch((error) => showToast(errorMessage(error), 'error'));
 void window.desktopApi.getLogs().then(renderLogs).catch((error) => showToast(errorMessage(error), 'error'));

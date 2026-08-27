@@ -6,10 +6,10 @@ import path from 'node:path';
 import { globSync } from 'glob';
 import { app } from 'electron';
 
-import { EXPECTED_PACKAGE_NAME, BUILD_RECORD_PATH, CLIENT_ARTIFACT_PATTERNS } from './constants';
+import { EXPECTED_PACKAGE_NAME, BUILD_RECORD_PATH, CLIENT_ARTIFACT_PATTERNS, GIT_CLONE_URL } from './constants';
 import { state } from './state';
 import type { SourceInspection, BuildRecord, ClientArtifactDigest } from './types';
-import { runFile } from './process-manager';
+import { runFile, runGitClone } from './process-manager';
 
 // ── Settings ──────────────────────────────────────────────────────────────
 
@@ -35,6 +35,21 @@ export function saveSourceDir(selectedSourceDir: string): void {
     writeFileSync(file, `${JSON.stringify({ sourceDir: selectedSourceDir }, null, 4)}\n`, 'utf8');
 }
 
+export function defaultCloneDir(): string {
+    return path.join(app.getPath('userData'), 'deepseek-harness');
+}
+
+export async function cloneHarness(): Promise<string> {
+    const targetDir = defaultCloneDir();
+    await runGitClone(GIT_CLONE_URL, targetDir, app.getPath('userData'));
+    const validation = validateSourceDir(targetDir);
+    if (!validation.valid || !validation.sourceDir) {
+        throw new Error(`克隆完成但验证失败：${validation.error || '源码目录无效'}`);
+    }
+    saveSourceDir(validation.sourceDir);
+    return validation.sourceDir;
+}
+
 // ── Validation ────────────────────────────────────────────────────────────
 
 interface ValidationResult {
@@ -55,14 +70,17 @@ function validateSourceDir(candidate: unknown): ValidationResult {
     try {
         const manifest = JSON.parse(readFileSync(packagePath, 'utf8')) as { name?: string };
         if (manifest.name !== EXPECTED_PACKAGE_NAME) {
-            return { valid: false, error: `所选目录不是 ${EXPECTED_PACKAGE_NAME} 源码仓库。` };
+            return {
+                valid: false,
+                error: `所选目录不是 DeepSeek Harness 源码仓库（package.json 的 name 应为 "${EXPECTED_PACKAGE_NAME}"，实际为 "${manifest.name ?? '未定义'}"）。请选择正确的 deepseek-harness 源码目录。`
+            };
         }
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        return { valid: false, error: `无法读取 package.json：${detail}` };
+        return { valid: false, error: `无法读取所选目录的 package.json：${detail}` };
     }
     if (!existsSync(path.join(resolved, '.git'))) {
-        return { valid: false, error: '所选目录不是 Git 工作区。' };
+        return { valid: false, error: '所选目录不是 Git 工作区（缺少 .git），请选择 deepseek-harness 的 Git 克隆目录。' };
     }
     return { valid: true, sourceDir: resolved };
 }
@@ -78,6 +96,11 @@ export function preferredSourceDir(): string {
         if (result.valid && result.sourceDir) return result.sourceDir;
     }
     return '';
+}
+
+export function preferredDefaultCloneDir(): string {
+    const result = validateSourceDir(defaultCloneDir());
+    return result.valid && result.sourceDir ? result.sourceDir : '';
 }
 
 // ── Build record ──────────────────────────────────────────────────────────

@@ -51,6 +51,8 @@ export interface SourceInspection {
     buildCommit?: string;
     currentCommit?: string;
     ready?: boolean;
+    needsClone?: boolean;
+    cloneDir?: string;
 }
 
 /**
@@ -72,6 +74,7 @@ export interface BuildRecord {
  */
 export type Phase =
     | 'idle'
+    | 'cloning'
     | 'preparing'
     | 'checking'
     | 'updating'

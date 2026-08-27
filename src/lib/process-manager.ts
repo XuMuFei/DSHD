@@ -6,7 +6,7 @@ import http from 'node:http';
 import { state } from './state';
 import {
     CMD_EXE, COMMAND_TIMEOUT_MS, WEB_START_TIMEOUT_MS,
-    WEB_URL, WEB_POLL_INTERVAL_MS, WEB_POLL_TIMEOUT_MS,
+    WEB_URL, WEB_ENDPOINT, WEB_POLL_INTERVAL_MS, WEB_POLL_TIMEOUT_MS,
     STREAM_POLL_TIMEOUT_MS, STDERR_MAX_LENGTH, MAX_BUFFER_BYTES,
     PROBE_TIMEOUT_MS, MAX_WEB_RESTART_ATTEMPTS, PHASE
 } from './constants';
@@ -51,6 +51,54 @@ export function stopProcessTree(child: ChildProcess | null): Promise<void> {
     return new Promise((resolve) => {
         execFile('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
             windowsHide: true
+        }, () => resolve());
+    });
+}
+
+// ── Port-based orphan cleanup (Windows) ───────────────────────────────────
+// The web process is spawned as `cmd.exe → pnpm.cmd → node(dsh)`. The cmd
+// wrapper is what we track, but a Windows batch script can detach: the
+// batch interpreter exits, and the node(dsh) grandchild gets reparented.
+// `taskkill /t` from the cmd wrapper's PID then does NOT reach the actual
+// port-3080 owner, so quit leaks the listener. As a safety net, look up
+// whatever PID is currently LISTENING on the web port and kill it directly.
+// Gated by `webProcessOwned` so we never kill an unrelated service that
+// happened to occupy the port (e.g., a manually-started external DSH).
+
+/** Find the PID currently LISTENING on `port` (TCP). Returns null if none. */
+function findListeningPid(port: number): Promise<number | null> {
+    if (process.platform !== 'win32') return Promise.resolve(null);
+    return new Promise((resolve) => {
+        execFile('netstat.exe', ['-ano', '-p', 'tcp'], {
+            windowsHide: true,
+            maxBuffer: MAX_BUFFER_BYTES,
+        }, (error, stdout) => {
+            if (error || !stdout) { resolve(null); return; }
+            const portSuffix = `:${port}`;
+            for (const line of stdout.split(/\r?\n/)) {
+                // netstat -ano columns: Proto LocalAddress ForeignAddress State PID
+                const cols = line.trim().split(/\s+/);
+                if (cols.length < 5) continue;
+                const local = cols[1] ?? '';
+                if (!local.endsWith(portSuffix)) continue;
+                if (cols[3] !== 'LISTENING') continue;
+                const pid = Number.parseInt(cols[4] ?? '', 10);
+                if (!Number.isFinite(pid) || pid <= 0) continue;
+                if (pid === process.pid) continue; // never kill ourselves
+                resolve(pid);
+                return;
+            }
+            resolve(null);
+        });
+    });
+}
+
+/** Kill a PID and its descendants (Windows). Resolves regardless of outcome. */
+function killPidTree(pid: number): Promise<void> {
+    if (process.platform !== 'win32') return Promise.resolve();
+    return new Promise((resolve) => {
+        execFile('taskkill.exe', ['/pid', String(pid), '/t', '/f'], {
+            windowsHide: true,
         }, () => resolve());
     });
 }
@@ -114,6 +162,57 @@ export function runPnpm(args: readonly string[], cwd: string): Promise<void> {
     });
 }
 
+export function runGitClone(url: string, targetDir: string, cwd: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+        appendLog('CMD', formatCommand('git.exe', ['clone', url, targetDir]));
+        const child = spawn('git.exe', ['clone', url, targetDir], {
+            cwd,
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        state.activeCommandProcess = child;
+        state.activeProcesses.add(child);
+        let stderr = '';
+        let settled = false;
+        const timeout = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            state.activeProcesses.delete(child);
+            state.activeCommandProcess = null;
+            void stopProcessTree(child);
+            reject(new Error(`git clone 执行超过 ${COMMAND_TIMEOUT_MS / 60000} 分钟。`));
+        }, COMMAND_TIMEOUT_MS);
+        child.stdout?.on('data', (chunk: Buffer) => appendLog('OUT', chunk.toString()));
+        child.stderr?.on('data', (chunk: Buffer) => {
+            const output = chunk.toString();
+            stderr = `${stderr}${output}`.slice(-STDERR_MAX_LENGTH);
+            appendLog('ERR', output);
+        });
+        child.once('error', (error) => {
+            state.activeProcesses.delete(child);
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            state.activeCommandProcess = null;
+            reject(error);
+        });
+        child.once('exit', (code, signal) => {
+            state.activeProcesses.delete(child);
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            state.activeCommandProcess = null;
+            if (code === 0) {
+                appendLog('EXIT', 'code 0');
+                resolve();
+                return;
+            }
+            appendLog('EXIT', `code ${code ?? signal}`);
+            reject(new Error(`git clone 失败 (${code ?? signal})：${stderr.trim()}`));
+        });
+    });
+}
+
 // ── Web process ───────────────────────────────────────────────────────────
 
 function startWebProcess(selectedSourceDir: string): void {
@@ -168,13 +267,31 @@ function startWebProcess(selectedSourceDir: string): void {
 }
 
 export async function stopWebProcess(): Promise<void> {
-    if (!state.webProcess) return;
     state.expectedWebStop = true;
-    const child = state.webProcess;
+    const tracked = state.webProcess;
+    const owned = state.webProcessOwned;
     state.webProcess = null;
     state.webProcessSourceDir = undefined;
     state.webProcessOwned = false;
-    await stopProcessTree(child);
+
+    // 1) Kill the tracked cmd wrapper tree (covers the common case).
+    if (tracked) {
+        await stopProcessTree(tracked);
+    }
+
+    // 2) Port-3080 fallback: catch a reparented orphan node(dsh) that
+    //    taskkill /t couldn't reach. Only when we owned the process, to
+    //    avoid killing an unrelated service on the same port.
+    if (owned && process.platform === 'win32') {
+        // Brief settle so taskkill can release the socket before we re-check.
+        await new Promise((r) => setTimeout(r, 200));
+        const orphan = await findListeningPid(Number(WEB_ENDPOINT.port));
+        if (orphan !== null) {
+            appendLog('CMD',
+                `port-fallback: killing orphan listener pid=${orphan} on port=${WEB_ENDPOINT.port}`);
+            await killPidTree(orphan);
+        }
+    }
 }
 
 // ── Web server probe / wait ───────────────────────────────────────────────

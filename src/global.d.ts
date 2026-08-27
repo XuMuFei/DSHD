@@ -6,6 +6,7 @@ interface DesktopApi {
     clearLogs: () => Promise<string[]>;
     getState: () => Promise<SourceInspection>;
     selectSource: () => Promise<SourceInspection | { canceled: true }>;
+    cloneSource: () => Promise<SourceInspection>;
     start: (sourceDir: string) => Promise<{ url: string; sourceDir: string; built: boolean }>;
     checkForUpdate: () => Promise<PendingUpdate>;
     applyUpdate: () => Promise<{ url: string; sourceDir: string }>;
@@ -23,6 +24,8 @@ interface SourceInspection {
     buildCommit?: string;
     currentCommit?: string;
     ready?: boolean;
+    needsClone?: boolean;
+    cloneDir?: string;
 }
 
 interface PendingUpdate {
@@ -41,4 +44,28 @@ interface IpcStatusPayload {
 
 interface Window {
     desktopApi: DesktopApi;
+}
+
+/** Detail payload of the Electron <webview> `did-fail-load` DOM event. */
+interface DidFailLoadEventDetail {
+    errorCode: number;
+    errorDescription: string;
+    validatedURL: string;
+    isMainFrame: boolean;
+}
+
+/** Minimal Electron <webview> element surface used by the renderer. */
+interface WebviewElement extends HTMLElement {
+    /** Page URL the webview is loading. Mirrors the standard attribute. */
+    src: string;
+    /** Reload the current page. */
+    reload(): void;
+    /** Stop the in-flight load. */
+    stop(): void;
+    /** A CustomEvent carrying {@link DidFailLoadEventDetail}. */
+    addEventListener(type: 'did-fail-load', listener: (event: Event & { detail?: DidFailLoadEventDetail }) => void): void;
+    addEventListener(type: 'did-finish-load', listener: (event: Event) => void): void;
+    addEventListener(type: 'did-start-loading', listener: (event: Event) => void): void;
+    addEventListener(type: 'did-stop-loading', listener: (event: Event) => void): void;
+    addEventListener(type: 'crashed', listener: (event: Event) => void): void;
 }

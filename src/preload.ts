@@ -4,14 +4,15 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld('desktop', {
+contextBridge.exposeInMainWorld('desktopApi', {
     getInfo: () => ipcRenderer.invoke('desktop:get-info'),
     getLogs: () => ipcRenderer.invoke('desktop:get-logs'),
     clearLogs: () => ipcRenderer.invoke('desktop:clear-logs'),
     getState: () => ipcRenderer.invoke('desktop:get-state'),
     selectSource: () => ipcRenderer.invoke('desktop:select-source'),
+    cloneSource: () => ipcRenderer.invoke('desktop:clone-source'),
     start: (sourceDir: string) => ipcRenderer.invoke('desktop:start', sourceDir),
-    checkUpdate: () => ipcRenderer.invoke('desktop:check-update'),
+    checkForUpdate: () => ipcRenderer.invoke('desktop:check-update'),
     applyUpdate: () => ipcRenderer.invoke('desktop:apply-update'),
 
     // Event listeners
