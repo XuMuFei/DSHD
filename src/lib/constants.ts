@@ -1,6 +1,7 @@
 // ── Configuration constants ──────────────────────────────────────────────
 
 export const WEB_URL = 'http://127.0.0.1:3080/' as const;
+export const DEV_SOURCE_DIR = 'E:\\git_workspace\\github\\deepseek-harness' as const;
 export const GIT_CLONE_URL = 'https://github.com/deepseek-ai/deepseek-harness.git' as const;
 export const EXPECTED_PACKAGE_NAME = '@deepseek-ai/dsh-root' as const;
 export const BUILD_RECORD_PATH = '.dsh-build/client-build-environment.json' as const;

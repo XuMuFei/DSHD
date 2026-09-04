@@ -2,7 +2,7 @@
 
 import { app, ipcMain, dialog } from 'electron';
 
-import { WEB_URL, WEB_ENDPOINT, BUILD_RECORD_PATH, PHASE, PROGRESS } from './constants';
+import { WEB_URL, WEB_ENDPOINT, BUILD_RECORD_PATH, DEV_SOURCE_DIR, PHASE, PROGRESS } from './constants';
 import { state } from './state';
 import { sendStatus, clearLogBuffer } from './utils';
 import {
@@ -90,6 +90,14 @@ export function registerIpcHandlers(): void {
             state.sourceDir = defaultCandidate;
             saveSourceDir(defaultCandidate);
             return inspectSource(defaultCandidate);
+        }
+        if (!app.isPackaged) {
+            return {
+                valid: false,
+                sourceDir: '',
+                needsClone: false,
+                error: `开发模式源码目录无效：${DEV_SOURCE_DIR}`
+            };
         }
         return { valid: false, sourceDir: '', needsClone: true, cloneDir: defaultCloneDir() };
     });

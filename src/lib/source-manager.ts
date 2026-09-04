@@ -6,7 +6,10 @@ import path from 'node:path';
 import { globSync } from 'glob';
 import { app } from 'electron';
 
-import { EXPECTED_PACKAGE_NAME, BUILD_RECORD_PATH, CLIENT_ARTIFACT_PATTERNS, GIT_CLONE_URL } from './constants';
+import {
+    EXPECTED_PACKAGE_NAME, BUILD_RECORD_PATH, CLIENT_ARTIFACT_PATTERNS,
+    DEV_SOURCE_DIR, GIT_CLONE_URL
+} from './constants';
 import { state } from './state';
 import type { SourceInspection, BuildRecord, ClientArtifactDigest } from './types';
 import { runFile, runGitClone } from './process-manager';
@@ -40,6 +43,9 @@ export function defaultCloneDir(): string {
 }
 
 export async function cloneHarness(): Promise<string> {
+    if (!app.isPackaged) {
+        throw new Error(`开发模式固定使用源码目录：${DEV_SOURCE_DIR}，不会自动克隆。`);
+    }
     const targetDir = defaultCloneDir();
     await runGitClone(GIT_CLONE_URL, targetDir, app.getPath('userData'));
     const validation = validateSourceDir(targetDir);
@@ -86,6 +92,10 @@ function validateSourceDir(candidate: unknown): ValidationResult {
 }
 
 export function preferredSourceDir(): string {
+    if (!app.isPackaged) {
+        const result = validateSourceDir(DEV_SOURCE_DIR);
+        return result.valid && result.sourceDir ? result.sourceDir : '';
+    }
     const settings = readSettings();
     const candidates = [
         process.env['DSH_SOURCE_DIR'],

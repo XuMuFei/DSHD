@@ -118,7 +118,6 @@ export interface IpcStartResponse {
  */
 export interface WebServerProbeResult {
     occupied: boolean;
-    isDsh: boolean;
 }
 
 /**

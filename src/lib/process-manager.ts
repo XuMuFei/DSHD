@@ -216,7 +216,9 @@ export function runGitClone(url: string, targetDir: string, cwd: string): Promis
 
 // ── Web process ───────────────────────────────────────────────────────────
 
-function startWebProcess(selectedSourceDir: string): void {
+const WEB_URL_CAPTURE_TIMEOUT_MS = 15_000;
+
+function startWebProcess(selectedSourceDir: string): Promise<string> {
     state.webExitMessage = undefined;
     state.webUrl = WEB_URL;
     state.expectedWebStop = false;
@@ -231,13 +233,29 @@ function startWebProcess(selectedSourceDir: string): void {
     });
     state.webProcess = proc;
     state.webProcessSourceDir = selectedSourceDir;
+    let resolveUrl: (url: string) => void = () => undefined;
+    let urlSettled = false;
+    const urlPromise = new Promise<string>((resolve) => {
+        resolveUrl = resolve;
+    });
+    setTimeout(() => {
+        if (urlSettled) return;
+        urlSettled = true;
+        resolveUrl(state.webUrl);
+    }, WEB_URL_CAPTURE_TIMEOUT_MS);
     let outputBuffer = '';
     const captureOutput = (kind: 'OUT' | 'ERR', chunk: Buffer): void => {
         const output = chunk.toString();
         appendLog(kind, output);
         outputBuffer = `${outputBuffer}${output}`.slice(-4096);
-        const urlMatch = outputBuffer.match(/https?:\/\/127\.0\.0\.1:3080\/\?token=[^\s"'<>]+/u);
-        if (urlMatch) state.webUrl = urlMatch[0];
+        const urlMatch = outputBuffer.match(/https?:\/\/127\.0\.0\.1:3080\/\?token=[A-Za-z0-9_-]+/u);
+        if (urlMatch) {
+            state.webUrl = urlMatch[0];
+            if (!urlSettled) {
+                urlSettled = true;
+                resolveUrl(state.webUrl);
+            }
+        }
         console[kind === 'OUT' ? 'log' : 'error'](`[dsh] ${output.trimEnd()}`);
     };
     proc.stdout?.on('data', (chunk: Buffer) => captureOutput('OUT', chunk));
@@ -245,6 +263,10 @@ function startWebProcess(selectedSourceDir: string): void {
     proc.once('error', (error) => {
         if (state.webProcess !== proc) return;
         state.webExitMessage = `启动 Web 服务失败：${error.message}`;
+        if (!urlSettled) {
+            urlSettled = true;
+            resolveUrl(state.webUrl);
+        }
     });
     proc.once('exit', (code, signal) => {
         // A deliberate restart clears the old process before starting its
@@ -256,6 +278,10 @@ function startWebProcess(selectedSourceDir: string): void {
         state.webProcessOwned = false;
         if (state.expectedWebStop || state.quitting) return;
         state.webExitMessage = `Web 服务已停止 (${code ?? signal})。`;
+        if (!urlSettled) {
+            urlSettled = true;
+            resolveUrl(state.webUrl);
+        }
 
         // Auto-restart: attempt to recover from unexpected crashes
         if (state.webRestartAttempts < MAX_WEB_RESTART_ATTEMPTS) {
@@ -263,9 +289,9 @@ function startWebProcess(selectedSourceDir: string): void {
             sendStatus(PHASE.STARTING,
                 `Web 服务意外停止，正在自动重试 (${state.webRestartAttempts}/${MAX_WEB_RESTART_ATTEMPTS})...`,
                 50);
-            startWebProcess(selectedSourceDir);
+            const restartUrl = startWebProcess(selectedSourceDir);
             state.webProcessOwned = true;
-            waitForWebServer().then(() => {
+            Promise.all([waitForWebServer(), restartUrl]).then(() => {
                 sendStatus(PHASE.READY, 'Web 服务运行中', 100);
             }).catch((restartError) => {
                 sendStatus(PHASE.ERROR, `自动重试失败：${restartError instanceof Error ? restartError.message : String(restartError)}`);
@@ -274,6 +300,8 @@ function startWebProcess(selectedSourceDir: string): void {
             sendStatus(PHASE.ERROR, state.webExitMessage);
         }
     });
+
+    return urlPromise;
 }
 
 export async function stopWebProcess(): Promise<void> {
@@ -312,24 +340,13 @@ export function probeWebServer(): Promise<WebServerProbeResult> {
         const guard = (value: WebServerProbeResult) => { if (!settled) { settled = true; resolve(value); } };
 
         const request = http.get(WEB_URL, (response) => {
-            let body = '';
-            const finish = () => {
-                const isDsh = body.includes('deepseek') || body.includes('dsh')
-                    || body.includes('harness') || /DSH|DeepSeek/i.test(body);
-                guard({ occupied: true, isDsh });
-            };
-            response.setEncoding('utf8');
-            response.on('data', (chunk) => {
-                body = `${body}${chunk}`.slice(0, 64 * 1024);
-            });
-            response.once('end', finish);
-            response.once('close', finish);
+            guard({ occupied: true });
             response.resume();
         });
-        request.once('error', () => guard({ occupied: false, isDsh: false }));
+        request.once('error', () => guard({ occupied: false }));
         request.setTimeout(PROBE_TIMEOUT_MS, () => {
             request.destroy();
-            guard({ occupied: false, isDsh: false });
+            guard({ occupied: false });
         });
     });
 }
@@ -389,20 +406,13 @@ export async function startPreparedWebService(selectedSourceDir: string): Promis
 
     const probe = await probeWebServer();
     if (probe.occupied) {
-        if (probe.isDsh) {
-            state.webProcess = null;
-            state.webProcessSourceDir = undefined;
-            state.webProcessOwned = false;
-            state.webUrl = WEB_URL;
-            sendStatus(PHASE.READY, '检测到外部 DSH 服务（无法验证源码目录），直接连接', 100);
-            return state.webUrl;
-        }
-        throw new Error('端口 3080 已被其他服务占用，请先关闭该服务。');
+        throw new Error('端口 3080 已被外部服务占用。请先关闭该服务，再回到首页点击“启动服务”。');
     }
     sendStatus(PHASE.STARTING, '正在执行 pnpm dsh web', 84);
-    startWebProcess(selectedSourceDir);
+    const urlPromise = startWebProcess(selectedSourceDir);
     state.webProcessOwned = true;
     await waitForWebServer();
+    const url = await urlPromise;
     sendStatus(PHASE.READY, '服务运行中', 100);
-    return state.webUrl;
+    return url;
 }
