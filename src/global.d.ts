@@ -8,6 +8,7 @@ interface DesktopApi {
     selectSource: () => Promise<SourceInspection | { canceled: true }>;
     cloneSource: () => Promise<SourceInspection>;
     start: (sourceDir: string) => Promise<{ url: string; sourceDir: string; built: boolean }>;
+    restartService: () => Promise<{ url: string; sourceDir: string }>;
     checkForUpdate: () => Promise<PendingUpdate>;
     applyUpdate: () => Promise<{ url: string; sourceDir: string }>;
     onStatus: (callback: (status: IpcStatusPayload) => void) => () => void;

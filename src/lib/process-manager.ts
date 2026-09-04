@@ -118,14 +118,6 @@ export function runPnpm(args: readonly string[], cwd: string): Promise<void> {
         state.activeProcesses.add(child);
         let stderr = '';
         let settled = false;
-        const timeout = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            state.activeProcesses.delete(child);
-            state.activeCommandProcess = null;
-            void stopProcessTree(child);
-            reject(new Error(`pnpm ${args.join(' ')} 执行超过 ${COMMAND_TIMEOUT_MS / 60000} 分钟。`));
-        }, COMMAND_TIMEOUT_MS);
 
         child.stdout.on('data', (chunk) => {
             appendLog('OUT', chunk.toString());
@@ -141,7 +133,6 @@ export function runPnpm(args: readonly string[], cwd: string): Promise<void> {
             state.activeProcesses.delete(child);
             if (settled) return;
             settled = true;
-            clearTimeout(timeout);
             state.activeCommandProcess = null;
             reject(error);
         });
@@ -149,7 +140,6 @@ export function runPnpm(args: readonly string[], cwd: string): Promise<void> {
             state.activeProcesses.delete(child);
             if (settled) return;
             settled = true;
-            clearTimeout(timeout);
             state.activeCommandProcess = null;
             if (code === 0) {
                 appendLog('EXIT', 'code 0');
@@ -160,6 +150,17 @@ export function runPnpm(args: readonly string[], cwd: string): Promise<void> {
             reject(new Error(`pnpm ${args.join(' ')} 失败 (${code ?? signal})：${stderr.trim()}`));
         });
     });
+}
+
+export async function runPnpmBuild(cwd: string): Promise<void> {
+    try {
+        await runPnpm(['run', 'build'], cwd);
+    } catch {
+        sendStatus(PHASE.BUILDING, 'pnpm run build 失败，正在执行 pnpm run clean', null);
+        await runPnpm(['run', 'clean'], cwd);
+        sendStatus(PHASE.BUILDING, '正在重新执行 pnpm run build', null);
+        await runPnpm(['run', 'build'], cwd);
+    }
 }
 
 export function runGitClone(url: string, targetDir: string, cwd: string): Promise<void> {
@@ -217,6 +218,7 @@ export function runGitClone(url: string, targetDir: string, cwd: string): Promis
 
 function startWebProcess(selectedSourceDir: string): void {
     state.webExitMessage = undefined;
+    state.webUrl = WEB_URL;
     state.expectedWebStop = false;
     appendLog('CMD', formatCommand('pnpm.cmd', ['dsh', 'web', '--no-open']));
     const proc = spawn(CMD_EXE, [
@@ -229,18 +231,26 @@ function startWebProcess(selectedSourceDir: string): void {
     });
     state.webProcess = proc;
     state.webProcessSourceDir = selectedSourceDir;
-    proc.stdout?.on('data', (chunk) => {
-        appendLog('OUT', chunk.toString());
-        console.log(`[dsh] ${chunk.toString().trimEnd()}`);
-    });
-    proc.stderr?.on('data', (chunk) => {
-        appendLog('ERR', chunk.toString());
-        console.error(`[dsh] ${chunk.toString().trimEnd()}`);
-    });
+    let outputBuffer = '';
+    const captureOutput = (kind: 'OUT' | 'ERR', chunk: Buffer): void => {
+        const output = chunk.toString();
+        appendLog(kind, output);
+        outputBuffer = `${outputBuffer}${output}`.slice(-4096);
+        const urlMatch = outputBuffer.match(/https?:\/\/127\.0\.0\.1:3080\/\?token=[^\s"'<>]+/u);
+        if (urlMatch) state.webUrl = urlMatch[0];
+        console[kind === 'OUT' ? 'log' : 'error'](`[dsh] ${output.trimEnd()}`);
+    };
+    proc.stdout?.on('data', (chunk: Buffer) => captureOutput('OUT', chunk));
+    proc.stderr?.on('data', (chunk: Buffer) => captureOutput('ERR', chunk));
     proc.once('error', (error) => {
+        if (state.webProcess !== proc) return;
         state.webExitMessage = `启动 Web 服务失败：${error.message}`;
     });
     proc.once('exit', (code, signal) => {
+        // A deliberate restart clears the old process before starting its
+        // replacement. Ignore late events from that old process so they
+        // cannot clear or restart the replacement service.
+        if (state.webProcess !== proc) return;
         state.webProcess = null;
         state.webProcessSourceDir = undefined;
         state.webProcessOwned = false;
@@ -367,14 +377,14 @@ export function waitForWebServer(): Promise<void> {
 
 // ── Start prepared web service ────────────────────────────────────────────
 
-export async function startPreparedWebService(selectedSourceDir: string): Promise<void> {
+export async function startPreparedWebService(selectedSourceDir: string): Promise<string> {
     if (state.webProcess) {
         if (state.webProcessSourceDir !== selectedSourceDir) {
             throw new Error('当前已有其他源码目录的 Web 服务正在运行，请先停止该服务。');
         }
         await waitForWebServer();
         sendStatus(PHASE.READY, 'Web 服务运行中', 100);
-        return;
+        return state.webUrl;
     }
 
     const probe = await probeWebServer();
@@ -383,8 +393,9 @@ export async function startPreparedWebService(selectedSourceDir: string): Promis
             state.webProcess = null;
             state.webProcessSourceDir = undefined;
             state.webProcessOwned = false;
+            state.webUrl = WEB_URL;
             sendStatus(PHASE.READY, '检测到外部 DSH 服务（无法验证源码目录），直接连接', 100);
-            return;
+            return state.webUrl;
         }
         throw new Error('端口 3080 已被其他服务占用，请先关闭该服务。');
     }
@@ -393,4 +404,5 @@ export async function startPreparedWebService(selectedSourceDir: string): Promis
     state.webProcessOwned = true;
     await waitForWebServer();
     sendStatus(PHASE.READY, '服务运行中', 100);
+    return state.webUrl;
 }

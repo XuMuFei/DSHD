@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('desktopApi', {
     selectSource: () => ipcRenderer.invoke('desktop:select-source'),
     cloneSource: () => ipcRenderer.invoke('desktop:clone-source'),
     start: (sourceDir: string) => ipcRenderer.invoke('desktop:start', sourceDir),
+    restartService: () => ipcRenderer.invoke('desktop:restart-service'),
     checkForUpdate: () => ipcRenderer.invoke('desktop:check-update'),
     applyUpdate: () => ipcRenderer.invoke('desktop:apply-update'),
 

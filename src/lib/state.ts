@@ -3,6 +3,7 @@
 import type { BrowserWindow } from 'electron';
 import type { ChildProcess } from 'node:child_process';
 import type { AppState, PendingUpdate } from './types';
+import { WEB_URL } from './constants';
 
 // ── Internal state variables ──────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ let webProcess: ChildProcess | null = null;
 let activeCommandProcess: ChildProcess | null = null;
 let activeProcesses = new Set<ChildProcess>();
 let webProcessSourceDir: string | undefined = undefined;
+let webUrl = WEB_URL;
 let webProcessOwned = false;
 let activeOperation: string | null = null;
 let pendingUpdate: PendingUpdate | null = null;
@@ -34,6 +36,7 @@ function reset(): void {
     activeCommandProcess = null;
     activeProcesses = new Set();
     webProcessSourceDir = undefined;
+    webUrl = WEB_URL;
     webProcessOwned = false;
     activeOperation = null;
     pendingUpdate = null;
@@ -67,6 +70,9 @@ export const state: AppState = {
 
     get webProcessSourceDir() { return webProcessSourceDir; },
     set webProcessSourceDir(v) { webProcessSourceDir = v; },
+
+    get webUrl() { return webUrl; },
+    set webUrl(v) { webUrl = v; },
 
     get webProcessOwned() { return webProcessOwned; },
     set webProcessOwned(v) { webProcessOwned = v; },

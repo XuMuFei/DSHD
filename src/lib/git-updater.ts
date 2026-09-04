@@ -1,6 +1,6 @@
 // ── Git update operations ─────────────────────────────────────────────────
 
-import { runFile, runPnpm, stopWebProcess, startPreparedWebService } from './process-manager';
+import { runFile, runPnpm, runPnpmBuild, stopWebProcess, startPreparedWebService } from './process-manager';
 import { inspectSource } from './source-manager';
 import { sendStatus, clearLogBuffer } from './utils';
 import { BUILD_RECORD_PATH, PHASE } from './constants';
@@ -86,17 +86,17 @@ export async function applyUpdate(): Promise<{ url: string; sourceDir: string }>
         await runPnpm(['install'], state.sourceDir);
 
         sendStatus(PHASE.BUILDING, '正在执行 pnpm run build', 65);
-        await runPnpm(['run', 'build'], state.sourceDir);
+        await runPnpmBuild(state.sourceDir);
 
         const completed = await inspectSource(state.sourceDir);
         if (!completed.hasCurrentBuild) {
             throw new Error(`更新构建完成，但 ${BUILD_RECORD_PATH} 与实际产物不一致。`);
         }
 
-        await startPreparedWebService(state.sourceDir);
+        const url = await startPreparedWebService(state.sourceDir);
         state.pendingUpdate = null;
         sendStatus(PHASE.READY, '更新完成');
-        return { url: 'http://127.0.0.1:3080/', sourceDir: state.sourceDir };
+        return { url, sourceDir: state.sourceDir };
     } catch (error) {
         // Recovery: restart the original service if it was running before update
         if (wasRunning) {

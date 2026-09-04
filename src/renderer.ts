@@ -27,6 +27,7 @@ const serviceMessage = $('service-message');
 const checkUpdate = $('check-update') as HTMLButtonElement;
 const workspaceShowLogs = $('workspace-show-logs') as HTMLButtonElement;
 const workspaceRefresh = $('workspace-refresh') as HTMLButtonElement | null;
+const workspaceRestart = $('workspace-restart') as HTMLButtonElement;
 const webContent = $('web-content') as WebviewElement;
 const serviceOverlay = $('service-overlay');
 const overlayMessage = $('overlay-message');
@@ -205,6 +206,7 @@ function updateStatus(status: IpcStatusPayload): void {
         serviceOverlay.hidden = !['updating', 'installing', 'building', 'starting'].includes(status.phase);
         overlayMessage.textContent = status.message;
         checkUpdate.disabled = busy || status.phase === 'checking';
+        workspaceRestart.disabled = busy || status.phase === 'checking';
     }
 }
 
@@ -280,6 +282,22 @@ workspaceRefresh?.addEventListener('click', () => {
     webviewRetryCount = 0;
     webContent.reload();
     showToast('正在刷新页面...');
+});
+workspaceRestart.addEventListener('click', async () => {
+    workspaceRestart.disabled = true;
+    serviceOverlay.hidden = false;
+    overlayMessage.textContent = '正在重启 3080 服务...';
+    try {
+        const result = await window.desktopApi.restartService();
+        webviewRetryCount = 0;
+        webContent.src = result.url;
+        showToast('3080 服务已重启，页面正在刷新');
+    } catch (error) {
+        serviceOverlay.hidden = true;
+        showToast(errorMessage(error), 'error');
+    } finally {
+        workspaceRestart.disabled = false;
+    }
 });
 closeLogs.addEventListener('click', hideLogs);
 logScrim.addEventListener('click', hideLogs);

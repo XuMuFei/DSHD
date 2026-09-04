@@ -9,7 +9,7 @@ import {
     preferredSourceDir, preferredDefaultCloneDir, defaultCloneDir,
     cloneHarness, inspectSource, saveSourceDir
 } from './source-manager';
-import { runPnpm, startPreparedWebService } from './process-manager';
+import { runPnpm, runPnpmBuild, stopWebProcess, startPreparedWebService } from './process-manager';
 import { checkForUpdates, applyUpdate } from './git-updater';
 import type { SourceInspection, IpcStartResponse, DesktopInfo } from './types';
 
@@ -53,7 +53,7 @@ async function prepareAndStart(selectedSourceDir: string): Promise<IpcStartRespo
         await runPnpm(['install'], state.sourceDir);
 
         sendStatus(PHASE.BUILDING, '正在执行 pnpm run build', PROGRESS.BUILD);
-        await runPnpm(['run', 'build'], state.sourceDir);
+        await runPnpmBuild(state.sourceDir);
 
         const completed = await inspectSource(state.sourceDir);
         if (!completed.hasCurrentBuild) {
@@ -61,8 +61,8 @@ async function prepareAndStart(selectedSourceDir: string): Promise<IpcStartRespo
         }
     }
 
-    await startPreparedWebService(state.sourceDir);
-    return { url: WEB_URL, sourceDir: state.sourceDir, built: !inspection.ready };
+    const url = await startPreparedWebService(state.sourceDir);
+    return { url, sourceDir: state.sourceDir, built: !inspection.ready };
 }
 
 // ── Register handlers ────────────────────────────────────────────────────
@@ -126,6 +126,20 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle('desktop:start', async (_event, selectedSourceDir: string): Promise<IpcStartResponse> =>
         withOperation('启动服务', () => prepareAndStart(selectedSourceDir)));
+
+    ipcMain.handle('desktop:restart-service', async (): Promise<{ url: string; sourceDir: string }> =>
+        withOperation('重启服务', async () => {
+            if (!state.sourceDir) throw new Error('尚未选择源码目录，无法重启服务。');
+            if (!state.webProcessOwned) {
+                throw new Error('当前 3080 服务不是由本客户端启动，无法重启。');
+            }
+
+            sendStatus(PHASE.STARTING, '正在停止 3080 服务', 20);
+            await stopWebProcess();
+            sendStatus(PHASE.STARTING, '正在重新启动 3080 服务', 60);
+            const url = await startPreparedWebService(state.sourceDir);
+            return { url, sourceDir: state.sourceDir };
+        }));
 
     ipcMain.handle('desktop:check-update', () =>
         withOperation('检查更新', checkForUpdates, { failurePhase: PHASE.READY }));

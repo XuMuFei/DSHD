@@ -13,6 +13,7 @@ export interface AppState {
     activeCommandProcess: ChildProcess | null;
     activeProcesses: Set<ChildProcess>;
     webProcessSourceDir: string | undefined;
+    webUrl: string;
     webProcessOwned: boolean;
     activeOperation: string | null;
     pendingUpdate: PendingUpdate | null;
